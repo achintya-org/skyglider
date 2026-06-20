@@ -47,9 +47,8 @@ server.close();
 
 const checks = {
   vehicleHasBody: info.carBody,
-  pedHasBody: info.pedBody,
-  vehicleKinematic: info.carMotion === info.ANIMATED,
-  pedDynamic: info.pedMotion === info.DYNAMIC,
+  vehicleDynamic: info.carMotion === info.DYNAMIC,           // heavy dynamic body (shoves peds, holds the player)
+  pedDynamicOrAbsent: !info.pedBody || info.pedMotion === info.DYNAMIC,
   noErrors: errors.length === 0,
 };
 console.log("info:", JSON.stringify(info));

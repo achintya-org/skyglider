@@ -198,7 +198,7 @@
 
     // Downtown asphalt plate beneath the city blocks
     const plate = BABYLON.MeshBuilder.CreateGround("plate", { width: 1140, height: 1140 }, scene);
-    plate.position.y = 0.02;
+    plate.position.y = 0.05;
     const pMat = new BABYLON.StandardMaterial("pMat", scene);
     pMat.diffuseColor = new BABYLON.Color3(0.2, 0.21, 0.24);
     pMat.specularColor = new BABYLON.Color3(0.02, 0.02, 0.02);
@@ -227,9 +227,9 @@
     for (let i = 0; i < G; i++) {
       const p = (i - half) * S0;
       const rx = BABYLON.MeshBuilder.CreateGround("rx" + i, { width: SPAN, height: ROAD_W }, scene);
-      rx.position.set(0, 0.04, p); rx.material = roadMat; rx.receiveShadows = true; rx.rotation.y = Math.PI / 2;
+      rx.position.set(0, 0.12, p); rx.material = roadMat; rx.receiveShadows = true; rx.rotation.y = Math.PI / 2;
       const rz = BABYLON.MeshBuilder.CreateGround("rz" + i, { width: SPAN, height: ROAD_W }, scene);
-      rz.position.set(p, 0.08, 0); rz.material = roadMat; rz.receiveShadows = true;
+      rz.position.set(p, 0.16, 0); rz.material = roadMat; rz.receiveShadows = true;
     }
 
     // Window-facade materials (a few shared variants)
@@ -374,7 +374,6 @@
   function spawnTraffic(it) {
     it.node = makeVehicle("car", it.x, it.z, it.rotY, it.col);
     const c = makeVehicleCollider("car", it.x, it.z, it.rotY); it.collider = c.collider; it.agg = c.agg;
-    syncCollider(it);
   }
 
   // Enterable, parked vehicles you can drive — a mix of cars and bikes.
@@ -396,7 +395,6 @@
     it.node = makeVehicle(it.type, it.x, it.z, it.rotY, it.col);
     if (it.node.metadata) { it.rotor = it.node.metadata.rotor; it.tailRotor = it.node.metadata.tailRotor; }
     const c = makeVehicleCollider(it.type, it.x, it.z, it.rotY); it.collider = c.collider; it.agg = c.agg;
-    syncCollider(it);
   }
 
   // ---- Lazy actor manager: meshes exist only near the player -------------
@@ -438,8 +436,9 @@
     const d = type === "bike" ? [0.7, 1.2, 1.9] : type === "heli" ? [2.4, 2.0, 4.4] : [2.2, 1.5, 4.6];
     const c = BABYLON.MeshBuilder.CreateBox("acol", { width: d[0], height: d[1], depth: d[2] }, scene);
     c.position.set(x, d[1] / 2, z); c.rotation.y = rotY; c.isVisible = false; c.isPickable = false;
-    const agg = new BABYLON.PhysicsAggregate(c, BABYLON.PhysicsShapeType.BOX, { mass: 0 }, scene);
-    agg.body.setMotionType(BABYLON.PhysicsMotionType.ANIMATED);
+    const agg = new BABYLON.PhysicsAggregate(c, BABYLON.PhysicsShapeType.BOX, { mass: 1500, friction: 0.3, restitution: 0 }, scene);
+    agg.body.setAngularDamping(100);
+    agg.body.setMassProperties({ inertia: BABYLON.Vector3.Zero() });   // heavy + never tips: shoves peds, holds against the player
     return { collider: c, agg };
   }
   function makePedCollider(x, z) {
@@ -451,10 +450,13 @@
     agg.body.setMassProperties({ inertia: BABYLON.Vector3.Zero() });   // stay upright
     return { collider: c, agg };
   }
-  function syncCollider(it) {
-    if (!it.collider) return;
-    it.collider.position.copyFrom(it.node.position);
-    it.collider.rotation.y = it.node.rotation.y;
+  // Drive the heavy dynamic collider toward its visual via velocity, so it
+  // actually pushes pedestrians / blocks the player instead of tunnelling
+  // through them (kinematic teleport doesn't impart contact in this Havok build).
+  function driveCollider(it, dt) {
+    if (!it.agg || !it.collider) return;
+    const c = it.collider.position, n = it.node.position, k = 1 / Math.max(dt, 0.016);
+    it.agg.body.setLinearVelocity(new BABYLON.Vector3((n.x - c.x) * k, (n.y - c.y) * k, (n.z - c.z) * k));
   }
 
   // ---- Coastline + ocean (north, +Z) ----
@@ -716,7 +718,7 @@
   // ========================================================================
   function buildCamera() {
     cam = new BABYLON.UniversalCamera("cam", new BABYLON.Vector3(0, 3, -8), scene);
-    cam.fov = 1.05; cam.minZ = 0.15; cam.maxZ = 8000;
+    cam.fov = 1.05; cam.minZ = 0.5; cam.maxZ = 3200;
     scene.activeCamera = cam;
   }
 
@@ -763,7 +765,7 @@
       t[ax] += t.dir * t.speed * dt;
       if (t[ax] > 640) t[ax] = -640; else if (t[ax] < -640) t[ax] = 640;
       t.node.position[ax] = t[ax];
-      syncCollider(t);                       // kinematic collider follows the car
+      driveCollider(t, dt);                   // collider chases the car, shoving pedestrians
     }
   }
 
@@ -958,7 +960,6 @@
     if (!blocked(node.position.x, nz)) node.position.z = nz; else carSpeed *= 0.2;
     node.rotation.y = carHeading;
     heroMesh.position.set(node.position.x, node.position.y, node.position.z);
-    syncCollider(drivingCar);                // your car shoves pedestrians as you drive
   }
 
   // ---- Helicopter (vertical-takeoff arcade flight) ----
@@ -982,13 +983,14 @@
     node.rotation.y = carHeading;
     node.rotation.x = clamp(fb * 0.18, -0.25, 0.25);   // nose tilt with travel
     heroMesh.position.set(node.position.x, node.position.y, node.position.z);
-    syncCollider(drivingCar);
   }
 
   // Spin every helicopter's rotors (faster for the one being piloted).
   function animateVehicles(dt) {
     for (const c of enterables) {
-      if (!c.node || !c.rotor) continue;
+      if (!c.node) continue;
+      driveCollider(c, dt);                   // keep each car's collider on its visual (parked or driven)
+      if (!c.rotor) continue;
       const fast = c === drivingCar;
       c.rotor.rotation.y += (fast ? 32 : 13) * dt;
       if (c.tailRotor) c.tailRotor.rotation.x += (fast ? 42 : 17) * dt;
