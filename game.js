@@ -44,7 +44,7 @@
   let mode = MODE.WALK;
 
   let engine, scene, heroMesh, heroBody, model, joints = {}, cam, shadowGen;
-  let buildings = [], water, traffic = [];
+  let buildings = [], water, traffic = [], peds = [], birds = [];
   let camYaw = 0, camPitch = 0.25, modelYaw = 0, flyYaw = 0, flyPitch = 0, boostE = 1, animPhase = 0, animT = 0;
   let grounded = false, pointerLocked = false, lockedOnce = false;
   const keys = {};
@@ -161,6 +161,8 @@
     buildOcean();
     buildVillage();
     buildNature();
+    buildPedestrians();
+    buildBirds();
   }
 
   function buildGround() {
@@ -383,6 +385,70 @@
     door.material = roof.material; door.parent = node; door.position.set(0, 1, d / 2 + 0.02);
   }
 
+  // ---- Pedestrians strolling the sidewalks ----
+  function buildPedestrians() {
+    const skin = scene.getMaterialByName("pedSkin") || mat("pedSkin", new BABYLON.Color3(0.82, 0.62, 0.5));
+    const shirts = [[0.82, 0.3, 0.3], [0.2, 0.42, 0.72], [0.3, 0.62, 0.42], [0.72, 0.62, 0.24], [0.6, 0.32, 0.6], [0.85, 0.85, 0.88]];
+    for (let i = 0; i < 16; i++) {
+      const onX = Math.random() < 0.5;
+      const lane = (Math.floor(Math.random() * 9) - 4) * 120 + (Math.random() < 0.5 ? 11 : -11);
+      const start = rand(440);
+      const node = new BABYLON.TransformNode("ped" + i, scene);
+      node.position.set(onX ? start : lane, 0, onX ? lane : start);
+      const dir = Math.random() < 0.5 ? 1 : -1;
+      const base = onX ? Math.PI / 2 : 0;
+      node.rotation.y = base + (dir > 0 ? 0 : Math.PI);
+      const sm = new BABYLON.StandardMaterial("ps" + i, scene);
+      const col = shirts[i % shirts.length];
+      sm.diffuseColor = new BABYLON.Color3(col[0], col[1], col[2]);
+      sm.specularColor = new BABYLON.Color3(0.05, 0.05, 0.05);
+      const torso = BABYLON.MeshBuilder.CreateBox("pt", { width: 0.4, height: 0.7, depth: 0.24 }, scene);
+      torso.material = sm; torso.parent = node; torso.position.y = 1.15; torso.isPickable = false;
+      const head = BABYLON.MeshBuilder.CreateSphere("ph", { diameter: 0.3, segments: 6 }, scene);
+      head.material = skin; head.parent = node; head.position.y = 1.62; head.isPickable = false;
+      const mkLeg = (sx) => {
+        const j = new BABYLON.TransformNode("pl", scene); j.parent = node; j.position.set(sx, 0.8, 0);
+        const l = BABYLON.MeshBuilder.CreateBox("plm", { width: 0.14, height: 0.7, depth: 0.18 }, scene);
+        l.material = sm; l.parent = j; l.position.y = -0.35; l.isPickable = false; return j;
+      };
+      peds.push({ node, legL: mkLeg(0.1), legR: mkLeg(-0.1), onX, dir, base, speed: 1.1 + Math.random() * 1.2, range: 60 + Math.random() * 120, travel: 0, phase: Math.random() * 6 });
+    }
+  }
+  function animatePedestrians(dt) {
+    for (const p of peds) {
+      const ax = p.onX ? "x" : "z";
+      p.node.position[ax] += p.dir * p.speed * dt;
+      p.travel += p.speed * dt;
+      if (p.travel > p.range) { p.travel = 0; p.dir *= -1; p.node.rotation.y = p.base + (p.dir > 0 ? 0 : Math.PI); }
+      p.phase += dt * 5;
+      const sw = Math.sin(p.phase) * 0.5;
+      p.legL.rotation.x = sw; p.legR.rotation.x = -sw;
+    }
+  }
+
+  // ---- Birds circling overhead ----
+  function buildBirds() {
+    const bm = mat("birdMat", new BABYLON.Color3(0.12, 0.12, 0.14));
+    for (let i = 0; i < 10; i++) {
+      const node = new BABYLON.TransformNode("bird" + i, scene);
+      const wl = BABYLON.MeshBuilder.CreateBox("wl", { width: 1.2, height: 0.05, depth: 0.35 }, scene);
+      wl.material = bm; wl.parent = node; wl.position.x = 0.6; wl.isPickable = false; wl.applyFog = false;
+      const wr = BABYLON.MeshBuilder.CreateBox("wr", { width: 1.2, height: 0.05, depth: 0.35 }, scene);
+      wr.material = bm; wr.parent = node; wr.position.x = -0.6; wr.isPickable = false; wr.applyFog = false;
+      birds.push({ node, wl, wr, cx: rand(1500), cz: rand(1500), r: 60 + Math.random() * 130, a: Math.random() * 6.28, y: 90 + Math.random() * 90, sp: 0.1 + Math.random() * 0.15, flap: Math.random() * 6 });
+    }
+  }
+  function animateBirds(dt) {
+    for (const b of birds) {
+      b.a += b.sp * dt;
+      b.node.position.set(b.cx + Math.cos(b.a) * b.r, b.y, b.cz + Math.sin(b.a) * b.r);
+      b.node.rotation.y = -b.a + Math.PI / 2;
+      b.flap += dt * 8;
+      const f = Math.sin(b.flap) * 0.5;
+      b.wl.rotation.z = -f; b.wr.rotation.z = f;
+    }
+  }
+
   // ========================================================================
   //  Character (GTA-style regular person — no wings)
   // ========================================================================
@@ -580,6 +646,8 @@
     animT += dt;
     scrollWater(dt);
     animateTraffic(dt);
+    animatePedestrians(dt);
+    animateBirds(dt);
     if (state !== S.PLAYING) { animateIdle(dt); updateCamera(dt); return; }
 
     // Unified 4-direction intent — arrow keys mirror the touch stick exactly.

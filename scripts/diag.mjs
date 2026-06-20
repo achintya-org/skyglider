@@ -22,9 +22,8 @@ const info = await page.evaluate(()=>{
   const sc = BABYLON.Engine.LastCreatedEngine.scenes[0];
   const cam = sc.activeCamera;
   // Bird's-eye over the map, looking north toward the coast.
-  cam.position = new BABYLON.Vector3(-650, 520, -1250);
-  cam.setTarget(new BABYLON.Vector3(0, 0, 400));
-  sc.fogDensity = 0.00018;
+  cam.position = new BABYLON.Vector3(70, 6, 70);
+  cam.setTarget(new BABYLON.Vector3(0, 4, -40));
   sc.render(); sc.render();
   const names = {};
   for (const m of sc.meshes) { const k = m.name.replace(/\d+$/, ""); names[k] = (names[k]||0)+1; }
