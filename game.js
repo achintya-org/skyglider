@@ -17,7 +17,7 @@
   const ui = {
     hud: $("hud"), touch: $("touch"), loading: $("loading"), menu: $("menu"),
     pause: $("pause"), err: $("err"),
-    speed: $("speed"), alt: $("alt"), mode: $("mode"), boostFill: $("boost-fill"),
+    speed: $("speed"), alt: $("alt"), mode: $("mode"), area: $("area"), boostFill: $("boost-fill"),
   };
 
   function fail(msg, e) {
@@ -44,7 +44,7 @@
   let mode = MODE.WALK;
 
   let engine, scene, heroMesh, heroBody, model, joints = {}, cam, shadowGen;
-  let buildings = [], water;
+  let buildings = [], water, traffic = [];
   let camYaw = 0, camPitch = 0.25, modelYaw = 0, flyYaw = 0, flyPitch = 0, boostE = 1, animPhase = 0, animT = 0;
   let grounded = false, pointerLocked = false, lockedOnce = false;
   const keys = {};
@@ -257,8 +257,11 @@
       const onX = Math.random() < 0.5;
       const x = onX ? along : lane + (Math.random() < 0.5 ? 5 : -5);
       const z = onX ? lane + (Math.random() < 0.5 ? 5 : -5) : along;
+      const dir = Math.random() < 0.5 ? 1 : -1;
       const car = new BABYLON.TransformNode("car" + i, scene);
-      car.position.set(x, 0.9, z); car.rotation.y = onX ? Math.PI / 2 : 0;
+      car.position.set(x, 0.9, z);
+      car.rotation.y = onX ? (dir > 0 ? Math.PI / 2 : -Math.PI / 2) : (dir > 0 ? 0 : Math.PI);
+      traffic.push({ node: car, onX, dir, speed: 7 + Math.random() * 7 });
       const col = colors[i % colors.length];
       const cm = new BABYLON.StandardMaterial("carMat" + i, scene);
       cm.diffuseColor = new BABYLON.Color3(col[0], col[1], col[2]);
@@ -478,6 +481,25 @@
     water.material.bumpTexture.vOffset += dt * 0.018;
   }
 
+  // Cars cruise along their road lane and wrap around at the city edge.
+  function animateTraffic(dt) {
+    for (const t of traffic) {
+      const d = t.dir * t.speed * dt;
+      const ax = t.onX ? "x" : "z";
+      t.node.position[ax] += d;
+      if (t.node.position[ax] > 640) t.node.position[ax] = -640;
+      else if (t.node.position[ax] < -640) t.node.position[ax] = 640;
+    }
+  }
+
+  function areaName(p) {
+    if (p.z > 720) return "OCEAN";
+    if (p.z > 540) return "COAST";
+    if (p.z < -680) return "VILLAGE";
+    if (Math.abs(p.x) < 560 && Math.abs(p.z) < 560) return "DOWNTOWN";
+    return "COUNTRYSIDE";
+  }
+
   // ========================================================================
   //  Input
   // ========================================================================
@@ -557,6 +579,7 @@
     if (!heroBody) return;
     animT += dt;
     scrollWater(dt);
+    animateTraffic(dt);
     if (state !== S.PLAYING) { animateIdle(dt); updateCamera(dt); return; }
 
     // Unified 4-direction intent — arrow keys mirror the touch stick exactly.
@@ -681,6 +704,8 @@
     ui.speed.textContent = Math.round(spd * 3.6);
     ui.alt.textContent = Math.max(0, Math.round(heroMesh.position.y - 1));
     ui.boostFill.style.width = (boostE * 100).toFixed(0) + "%";
+    const a = areaName(heroMesh.position);
+    if (ui.area && ui.area.textContent !== a) ui.area.textContent = a;
   }
 
   function lockPointer() {
