@@ -42,7 +42,7 @@
     if (!available || MP.enabled) return;
     if (!MP.name) setName("");
     MP.uid = uidGen();
-    worker = new Worker("./mp-worker.js?v=mp3");
+    worker = new Worker("./mp-worker.js?v=mp4");
     worker.onmessage = (e) => { if (e.data && e.data.type === "players") MP.players = e.data.players || {}; };
     worker.postMessage({ type: "start", base: BASE, uid: MP.uid, name: MP.name });
     lastPostX = lastPostZ = 1e9;
