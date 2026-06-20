@@ -67,6 +67,10 @@
   //  Boot
   // ========================================================================
   async function boot() {
+    if (typeof BABYLON === "undefined")
+      return fail("3D engine didn't load. Hard-refresh (Ctrl/Cmd+Shift+R) to clear an old cache.");
+    if (typeof HavokPhysics === "undefined")
+      return fail("Physics engine didn't load. Hard-refresh (Ctrl/Cmd+Shift+R) to clear an old cache.");
     if (!BABYLON.Engine.isSupported()) return fail("WebGL is not supported on this device/browser.");
 
     try {
@@ -77,11 +81,15 @@
     scene.clearColor = new BABYLON.Color3(0.53, 0.78, 0.92);
     scene.ambientColor = new BABYLON.Color3(0.6, 0.6, 0.6);
 
-    // Physics (Havok)
+    // Physics (Havok) — race against a timeout so a stalled WASM fetch surfaces
+    // an error instead of leaving the loading screen up forever.
     let havok;
     try {
-      havok = await HavokPhysics();
-    } catch (e) { return fail("Could not load the Havok physics engine.", e); }
+      havok = await Promise.race([
+        HavokPhysics(),
+        new Promise((_, rej) => setTimeout(() => rej(new Error("timeout")), 30000)),
+      ]);
+    } catch (e) { return fail("Physics engine failed to start. Check your connection and reload.", e); }
     const plugin = new BABYLON.HavokPlugin(true, havok);
     scene.enablePhysics(new BABYLON.Vector3(0, -GRAVITY, 0), plugin);
 

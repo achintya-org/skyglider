@@ -1,5 +1,7 @@
-// Sky Glider service worker — offline-first app shell (3D build).
-const CACHE = "skyglider-3d-v1";
+// Sky Glider service worker — network-first so updates always win, with a
+// cached app shell for offline play. (Network-first avoids the stale-cache
+// trap where an old worker keeps serving a previous build's game.js.)
+const CACHE = "skyglider-3d-v3";
 const ASSETS = [
   "./",
   "./index.html",
@@ -17,15 +19,17 @@ const ASSETS = [
 
 self.addEventListener("install", (event) => {
   event.waitUntil(
-    caches.open(CACHE).then((cache) => cache.addAll(ASSETS)).then(() => self.skipWaiting())
+    caches.open(CACHE)
+      .then((cache) => Promise.allSettled(ASSETS.map((a) => cache.add(a))))
+      .then(() => self.skipWaiting())
   );
 });
 
 self.addEventListener("activate", (event) => {
   event.waitUntil(
-    caches.keys().then((keys) =>
-      Promise.all(keys.filter((k) => k !== CACHE).map((k) => caches.delete(k)))
-    ).then(() => self.clients.claim())
+    caches.keys()
+      .then((keys) => Promise.all(keys.filter((k) => k !== CACHE).map((k) => caches.delete(k))))
+      .then(() => self.clients.claim())
   );
 });
 
@@ -33,21 +37,20 @@ self.addEventListener("fetch", (event) => {
   const req = event.request;
   if (req.method !== "GET") return;
 
-  if (req.mode === "navigate") {
-    event.respondWith(fetch(req).catch(() => caches.match("./index.html")));
-    return;
-  }
-
+  // Network-first: always try the live network, fall back to cache offline.
   event.respondWith(
-    caches.match(req).then((cached) => {
-      if (cached) return cached;
-      return fetch(req).then((res) => {
-        if (res && res.status === 200 && res.type === "basic") {
+    fetch(req)
+      .then((res) => {
+        if (res && res.ok && res.type === "basic") {
           const copy = res.clone();
           caches.open(CACHE).then((cache) => cache.put(req, copy));
         }
         return res;
-      }).catch(() => cached);
-    })
+      })
+      .catch(() =>
+        caches.match(req, { ignoreSearch: true }).then(
+          (cached) => cached || (req.mode === "navigate" ? caches.match("./index.html") : Response.error())
+        )
+      )
   );
 });
