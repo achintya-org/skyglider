@@ -2,49 +2,42 @@
 <html lang="en">
 <head>
   <meta charset="UTF-8" />
-  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no, viewport-fit=cover" />
   <meta name="theme-color" content="#1e3a8a" />
-  <meta name="description" content="Sky Glider — a fast, installable PWA flying game playable offline. Coming soon." />
+  <meta name="description" content="Sky Glider — a fast, installable PWA flying game playable offline. Tap, click or press space to fly through the gaps." />
   <title>Sky Glider</title>
-  <style>
-    * { box-sizing: border-box; margin: 0; padding: 0; }
-    html, body { height: 100%; }
-    body {
-      min-height: 100%;
-      display: flex;
-      flex-direction: column;
-      align-items: center;
-      justify-content: center;
-      gap: 18px;
-      font-family: system-ui, -apple-system, "Segoe UI", Roboto, sans-serif;
-      color: #f8fafc;
-      text-align: center;
-      padding: 24px;
-      background: linear-gradient(160deg, #4aa6e2 0%, #1e3a8a 60%, #0b1220 100%);
-    }
-    h1 {
-      font-size: clamp(40px, 12vw, 88px);
-      font-weight: 900;
-      letter-spacing: 1px;
-      text-shadow: 0 5px 0 rgba(0, 0, 0, 0.25);
-    }
-    p { font-size: clamp(15px, 4.5vw, 20px); opacity: 0.92; max-width: 32ch; }
-    .badge {
-      margin-top: 10px;
-      padding: 8px 18px;
-      border-radius: 999px;
-      background: rgba(255, 255, 255, 0.14);
-      border: 1px solid rgba(255, 255, 255, 0.25);
-      font-size: 14px;
-      font-weight: 600;
-    }
-    .bird { font-size: clamp(56px, 18vw, 120px); line-height: 1; }
-  </style>
+  <link rel="manifest" href="./manifest.webmanifest" />
+  <link rel="icon" type="image/svg+xml" href="./icons/icon.svg" />
+  <link rel="apple-touch-icon" href="./icons/icon-192.png" />
+  <link rel="stylesheet" href="./styles.css" />
 </head>
 <body>
-  <div class="bird">🐤</div>
-  <h1>Sky&nbsp;Glider</h1>
-  <p>A fast, installable PWA flying game playable offline. Tap, click or press space to fly through the gaps.</p>
-  <div class="badge">✅ Deployed on GitHub Pages — game coming next</div>
+  <div id="game-wrap">
+    <canvas id="game" width="480" height="720" aria-label="Sky Glider game canvas"></canvas>
+
+    <div id="hud">
+      <div id="score">0</div>
+    </div>
+
+    <div id="overlay" class="screen">
+      <h1>Sky&nbsp;Glider</h1>
+      <p class="tagline">Fly through the gaps. Don't crash.</p>
+      <button id="start-btn" class="btn">Play</button>
+      <p class="hint">Tap &middot; Click &middot; Space</p>
+      <p class="best">Best: <span id="best-start">0</span></p>
+    </div>
+
+    <div id="gameover" class="screen hidden">
+      <h2>Game Over</h2>
+      <p class="final">Score <span id="final-score">0</span></p>
+      <p class="best">Best: <span id="final-best">0</span></p>
+      <button id="restart-btn" class="btn">Play Again</button>
+      <p class="hint">Tap &middot; Click &middot; Space</p>
+    </div>
+  </div>
+
+  <p id="install-tip" class="hidden">📲 Install Sky Glider for offline play <button id="install-btn" class="btn-sm">Install</button></p>
+
+  <script src="./game.js"></script>
 </body>
 </html>
