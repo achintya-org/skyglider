@@ -728,6 +728,14 @@
     $("resume-btn").addEventListener("click", (e) => { e.stopPropagation(); resumeGame(); });
     $("menu-btn").addEventListener("click", (e) => { e.stopPropagation(); toMenu(); });
     $("pause-btn").addEventListener("click", (e) => { e.stopPropagation(); pauseGame(); });
+    const onlineBtn = document.getElementById("online-btn");
+    if (onlineBtn) onlineBtn.addEventListener("click", (e) => {
+      e.stopPropagation();
+      if (!window.MP || !MP.available) return;
+      if (!MP.enabled) { MP.setName((document.getElementById("name-input") || {}).value || ""); }
+      MP.toggle(!MP.enabled);
+      reflectOnline();
+    });
 
     setupTouch();
   }
@@ -814,6 +822,14 @@
   function onChatToggle(open) {
     if (open) { if (document.pointerLockElement) document.exitPointerLock(); }
     else if (state === S.PLAYING) lockPointer();
+  }
+
+  function reflectOnline() {
+    const b = document.getElementById("online-btn");
+    if (!b || !window.MP) return;
+    b.classList.toggle("hidden", !MP.available);
+    b.classList.toggle("on", MP.enabled);
+    b.textContent = MP.enabled ? "ONLINE" : "GO ONLINE";
   }
 
   // ---- Driving (arcade) ----
@@ -1048,7 +1064,9 @@
       MP.setName(nameEl ? nameEl.value.trim() : "");
       const onl = document.getElementById("online-toggle");
       if (onl && onl.checked) MP.connect();   // opt-in only
+      reflectOnline();
     }
+    maybeManageActors(heroMesh.position);   // ensure nearby actors exist before first input
     lockPointer();
   }
   function pauseGame() {
@@ -1066,6 +1084,7 @@
   function toMenu() {
     state = S.MENU;
     if (window.MP && MP.enabled) MP.disconnect();   // stop networking when leaving
+    reflectOnline();
     // leave any vehicle and reset to the downtown plaza, on foot
     drivingCar = null; carSpeed = 0;
     model.setEnabled(true);

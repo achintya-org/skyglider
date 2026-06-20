@@ -160,6 +160,18 @@ kbd {
   backdrop-filter: blur(8px); -webkit-backdrop-filter: blur(8px);
 }
 
+#online-btn {
+  position: absolute; top: 14px; right: 64px;
+  pointer-events: auto;
+  height: 42px; padding: 0 14px;
+  font-family: var(--font); font-size: 12px; font-weight: 700; letter-spacing: 0.06em;
+  color: var(--ink);
+  background: var(--glass); border: 1px solid var(--glass-brd);
+  border-radius: 12px; cursor: pointer;
+  backdrop-filter: blur(8px); -webkit-backdrop-filter: blur(8px);
+}
+#online-btn.on { color: #07131f; background: var(--accent); border-color: var(--accent); }
+
 #readout {
   position: absolute; left: 50%; bottom: 22px;
   transform: translateX(-50%);
