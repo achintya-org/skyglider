@@ -43,19 +43,38 @@ jobs:
           set +e
           PID="${{ steps.t.outputs.pid }}"
           if [ -z "$PID" ]; then PID="skyglider-$(openssl rand -hex 4)"; fi
-          echo "Using project id: $PID"
-          echo "=== create project (ok if exists) ==="
-          firebase projects:create "$PID" --display-name "Sky Glider" --json; echo
-          echo "=== create Realtime Database instance ==="
-          firebase database:instances:create "${PID}-default" --project "$PID" --location us-central1 --json; echo
-          echo "=== create web app ==="
-          firebase apps:create WEB "Sky Glider Web" --project "$PID" --json > app.json; cat app.json; echo
-          APPID=$(node -e "try{const j=require('./app.json');const f=JSON.stringify(j);const m=f.match(/1:[0-9]+:web:[0-9a-z]+/i);process.stdout.write(m?m[0]:'')}catch(e){}")
+          echo "Project: $PID"
+          firebase projects:create "$PID" --display-name "Sky Glider" --json >/dev/null 2>&1
+
+          # Exchange the CI refresh token for an access token (firebase-tools' public client).
+          ACCESS=$(curl -s https://oauth2.googleapis.com/token \
+            -d client_id=563584335869-fgrhgmd47bqnekij5i8b5pr03ho849e6.apps.googleusercontent.com \
+            -d client_secret=j9iVZfS8kkCEFUPaAeJV0sAi \
+            -d refresh_token="$FIREBASE_TOKEN" -d grant_type=refresh_token \
+            | node -e "let s='';process.stdin.on('data',d=>s+=d).on('end',()=>{try{process.stdout.write(JSON.parse(s).access_token||'')}catch(e){}})")
+          echo "access token length: ${#ACCESS}"
+
+          echo "=== enable Realtime Database API ==="
+          curl -s -X POST "https://serviceusage.googleapis.com/v1/projects/$PID/services/firebasedatabase.googleapis.com:enable" \
+            -H "Authorization: Bearer $ACCESS" -H "Content-Length: 0"; echo
+          sleep 20
+
+          echo "=== create default RTDB instance ==="
+          curl -s -X POST "https://firebasedatabase.googleapis.com/v1beta/projects/$PID/locations/us-central1/instances?databaseId=${PID}-default-rtdb" \
+            -H "Authorization: Bearer $ACCESS" -H "Content-Type: application/json" \
+            -d '{"type":"DEFAULT_DATABASE"}'; echo
+          sleep 10
+          DBURL="https://${PID}-default-rtdb.firebaseio.com"
+          echo "DBURL=$DBURL"
+
+          echo "=== web app + config ==="
+          APPID=$(firebase apps:list WEB --project "$PID" 2>/dev/null | grep -oE '1:[0-9]+:web:[0-9a-z]+' | head -1)
+          if [ -z "$APPID" ]; then firebase apps:create WEB "Sky Glider Web" --project "$PID" --json > app.json 2>/dev/null; APPID=$(grep -oE '1:[0-9]+:web:[0-9a-z]+' app.json | head -1); fi
           echo "APPID=$APPID"
-          echo "=== sdk config ==="
-          firebase apps:sdkconfig WEB "$APPID" --project "$PID" --json > sdk.json
+          firebase apps:sdkconfig WEB "$APPID" --project "$PID" --json > sdk.json 2>/dev/null
           echo "=====CONFIG_START====="
-          cat sdk.json
+          node -e "const j=require('./sdk.json');const c=(j.result&&j.result.sdkConfig)||{};c.databaseURL='$DBURL';console.log(JSON.stringify(c,null,2))"
           echo "=====CONFIG_END====="
+
           echo "=== deploy database rules ==="
           firebase deploy --only database --project "$PID" --non-interactive
