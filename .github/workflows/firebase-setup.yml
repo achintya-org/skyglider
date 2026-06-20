@@ -1,18 +1,12 @@
 name: Firebase setup
 
-# Manual, one-shot helper to provision the multiplayer backend using the org
-# secret FIREBASE_TOKEN. Run with mode=probe first (auth check), then
-# mode=provision to create the project / web app / Realtime Database and print
-# the web config.
+# Provisions the multiplayer backend using the org secret FIREBASE_TOKEN.
+# Triggered by editing .github/firebase-trigger.txt (push-based, so it works
+# on this feature branch). Line 1 = mode (probe|provision), line 2 = project id.
 on:
-  workflow_dispatch:
-    inputs:
-      mode:
-        description: "probe or provision"
-        default: "probe"
-      project_id:
-        description: "Project id to create/use (provision mode; blank = auto)"
-        default: ""
+  push:
+    branches: ["claude/move-into-org-one-712g89"]
+    paths: [".github/firebase-trigger.txt"]
 
 jobs:
   setup:
@@ -25,7 +19,17 @@ jobs:
         with:
           node-version: "20"
       - run: npm i -g firebase-tools
-      - name: Version + auth check
+
+      - name: Read trigger
+        id: t
+        run: |
+          MODE=$(sed -n '1p' .github/firebase-trigger.txt | tr -d '[:space:]')
+          PID=$(sed -n '2p' .github/firebase-trigger.txt | tr -d '[:space:]')
+          echo "mode=$MODE" >> "$GITHUB_OUTPUT"
+          echo "pid=$PID" >> "$GITHUB_OUTPUT"
+          echo "MODE=$MODE  PID=$PID"
+
+      - name: Auth check
         run: |
           echo "token length: ${#FIREBASE_TOKEN}"
           firebase --version
@@ -34,23 +38,24 @@ jobs:
           cat projects.json 2>/dev/null || true
 
       - name: Provision
-        if: ${{ inputs.mode == 'provision' }}
+        if: steps.t.outputs.mode == 'provision'
         run: |
           set +e
-          PID="${{ inputs.project_id }}"
+          PID="${{ steps.t.outputs.pid }}"
           if [ -z "$PID" ]; then PID="skyglider-$(openssl rand -hex 4)"; fi
           echo "Using project id: $PID"
-          echo "=== create project (ok if it already exists) ==="
+          echo "=== create project (ok if exists) ==="
           firebase projects:create "$PID" --display-name "Sky Glider" --json; echo
-          echo "=== enable Realtime Database instance ==="
+          echo "=== create Realtime Database instance ==="
           firebase database:instances:create "${PID}-default" --project "$PID" --location us-central1 --json; echo
           echo "=== create web app ==="
           firebase apps:create WEB "Sky Glider Web" --project "$PID" --json > app.json; cat app.json; echo
-          APPID=$(node -e "try{const j=require('./app.json');process.stdout.write((j.result&&(j.result.appId||j.result.appsId))||'')}catch(e){}")
-          if [ -z "$APPID" ]; then APPID=$(node -e "const j=require('./app.json');const f=JSON.stringify(j);const m=f.match(/1:[0-9]+:web:[0-9a-f]+/);process.stdout.write(m?m[0]:'')"); fi
+          APPID=$(node -e "try{const j=require('./app.json');const f=JSON.stringify(j);const m=f.match(/1:[0-9]+:web:[0-9a-z]+/i);process.stdout.write(m?m[0]:'')}catch(e){}")
           echo "APPID=$APPID"
           echo "=== sdk config ==="
-          firebase apps:sdkconfig WEB "$APPID" --project "$PID" --json > sdk.json; echo
+          firebase apps:sdkconfig WEB "$APPID" --project "$PID" --json > sdk.json
           echo "=====CONFIG_START====="
           cat sdk.json
           echo "=====CONFIG_END====="
+          echo "=== deploy database rules ==="
+          firebase deploy --only database --project "$PID" --non-interactive
