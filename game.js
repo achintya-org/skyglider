@@ -100,7 +100,9 @@
       heliVy: heliVel ? heliVel.y : 0,
       px: heroMesh.position.x, pz: heroMesh.position.z,
       cars: enterables.length,
+      mats: scene.materials.length, meshes: scene.meshes.length,
     });
+    window.__tp = (x, z) => { heroMesh.position.set(x, heroMesh.position.y, z); maybeManageActors(heroMesh.position); return scene.materials.length; };
     window.__enter = (type) => {
       if (state !== S.PLAYING || mode !== MODE.WALK) return mode;
       const c = enterables.find((e) => !type || e.type === type);
@@ -275,9 +277,7 @@
   function makeVehicle(type, x, z, rotY, col) {
     const node = new BABYLON.TransformNode(type, scene);
     node.position.set(x, type === "bike" ? 0.6 : type === "heli" ? 1.2 : 0.9, z); node.rotation.y = rotY;
-    const cm = new BABYLON.StandardMaterial("vMat", scene);
-    cm.diffuseColor = new BABYLON.Color3(col[0], col[1], col[2]);
-    cm.specularColor = new BABYLON.Color3(0.4, 0.4, 0.4);
+    const cm = cachedMat("vmat_" + col.join("_"), col, 0.4);
     const wheelMat = scene.getMaterialByName("wheelMat") || mat("wheelMat", new BABYLON.Color3(0.05, 0.05, 0.06));
     const wheel = (dia, thick, px, py, pz) => {
       const w = BABYLON.MeshBuilder.CreateCylinder("w", { diameter: dia, height: thick, tessellation: 12 }, scene);
@@ -311,14 +311,14 @@
       const frame = BABYLON.MeshBuilder.CreateBox("bf", { width: 0.26, height: 0.4, depth: 1.7 }, scene);
       frame.material = cm; frame.parent = node; frame.position.y = 0.35; shadowGen.addShadowCaster(frame);
       const seat = BABYLON.MeshBuilder.CreateBox("bs", { width: 0.3, height: 0.18, depth: 0.7 }, scene);
-      seat.material = mat("seatMat", new BABYLON.Color3(0.08, 0.08, 0.1)); seat.parent = node; seat.position.set(0, 0.6, -0.45);
+      seat.material = scene.getMaterialByName("seatMat") || mat("seatMat", new BABYLON.Color3(0.08, 0.08, 0.1)); seat.parent = node; seat.position.set(0, 0.6, -0.45);
       const bar = BABYLON.MeshBuilder.CreateBox("bb", { width: 0.7, height: 0.08, depth: 0.08 }, scene);
       bar.material = seat.material; bar.parent = node; bar.position.set(0, 0.7, 0.7);
       wheel(1.0, 0.16, 0, 0.0, 0.85); wheel(1.0, 0.16, 0, 0.0, -0.85);
       // seated rider so it never looks empty
       const skin = scene.getMaterialByName("skin") || mat("skin", new BABYLON.Color3(0.86, 0.66, 0.52));
       const rb = BABYLON.MeshBuilder.CreateBox("rb", { width: 0.42, height: 0.6, depth: 0.3 }, scene);
-      rb.material = mat("riderMat", new BABYLON.Color3(0.2, 0.22, 0.28)); rb.parent = node; rb.position.set(0, 1.0, -0.35);
+      rb.material = scene.getMaterialByName("riderMat") || mat("riderMat", new BABYLON.Color3(0.2, 0.22, 0.28)); rb.parent = node; rb.position.set(0, 1.0, -0.35);
       rb.rotation.x = 0.3; shadowGen.addShadowCaster(rb);
       const rh = BABYLON.MeshBuilder.CreateSphere("rh", { diameter: 0.3, segments: 6 }, scene);
       rh.material = skin; rh.parent = node; rh.position.set(0, 1.42, -0.2);
@@ -388,7 +388,10 @@
     }
   }
   function disposeActor(it) {
-    it.node.dispose(false, true); it.node = null; it.rotor = null; it.tailRotor = null; it.legL = null; it.legR = null;
+    // Dispose the meshes only — NOT materials/textures. Actor materials are
+    // shared/cached (see cachedMat); destroying them would tear down materials
+    // still used by the world + hero and make the GlowLayer flash. false,false.
+    it.node.dispose(false, false); it.node = null; it.rotor = null; it.tailRotor = null; it.legL = null; it.legR = null;
   }
 
   // ---- Coastline + ocean (north, +Z) ----
@@ -517,9 +520,7 @@
     const node = new BABYLON.TransformNode("ped", scene);
     node.position.set(it.x, 0, it.z);
     node.rotation.y = it.base + (it.dir > 0 ? 0 : Math.PI);
-    const sm = new BABYLON.StandardMaterial("ps", scene);
-    sm.diffuseColor = new BABYLON.Color3(it.col[0], it.col[1], it.col[2]);
-    sm.specularColor = new BABYLON.Color3(0.05, 0.05, 0.05);
+    const sm = cachedMat("pedShirt_" + it.col.join("_"), it.col, 0.05);
     const torso = BABYLON.MeshBuilder.CreateBox("pt", { width: 0.4, height: 0.7, depth: 0.24 }, scene);
     torso.material = sm; torso.parent = node; torso.position.y = 1.15; torso.isPickable = false;
     const head = BABYLON.MeshBuilder.CreateSphere("ph", { diameter: 0.3, segments: 6 }, scene);
@@ -625,6 +626,19 @@
   function mat(name, color) {
     const m = new BABYLON.StandardMaterial(name, scene);
     m.diffuseColor = color; m.specularColor = new BABYLON.Color3(0.08, 0.08, 0.08);
+    return m;
+  }
+
+  // Returns a shared material for a given key/color (created once, reused across
+  // all spawns of that color). Lazy actors must use these so despawn never has
+  // to free a material — keeping the world/hero materials and GlowLayer intact.
+  function cachedMat(key, col, spec) {
+    let m = scene.getMaterialByName(key);
+    if (!m) {
+      m = new BABYLON.StandardMaterial(key, scene);
+      m.diffuseColor = new BABYLON.Color3(col[0], col[1], col[2]);
+      m.specularColor = new BABYLON.Color3(spec, spec, spec);
+    }
     return m;
   }
 
