@@ -1,0 +1,56 @@
+name: Firebase setup
+
+# Manual, one-shot helper to provision the multiplayer backend using the org
+# secret FIREBASE_TOKEN. Run with mode=probe first (auth check), then
+# mode=provision to create the project / web app / Realtime Database and print
+# the web config.
+on:
+  workflow_dispatch:
+    inputs:
+      mode:
+        description: "probe or provision"
+        default: "probe"
+      project_id:
+        description: "Project id to create/use (provision mode; blank = auto)"
+        default: ""
+
+jobs:
+  setup:
+    runs-on: ubuntu-latest
+    env:
+      FIREBASE_TOKEN: ${{ secrets.FIREBASE_TOKEN }}
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "20"
+      - run: npm i -g firebase-tools
+      - name: Version + auth check
+        run: |
+          echo "token length: ${#FIREBASE_TOKEN}"
+          firebase --version
+          echo "=== projects:list ==="
+          firebase projects:list --json > projects.json 2> list.err || { echo "LIST_FAILED"; cat list.err; }
+          cat projects.json 2>/dev/null || true
+
+      - name: Provision
+        if: ${{ inputs.mode == 'provision' }}
+        run: |
+          set +e
+          PID="${{ inputs.project_id }}"
+          if [ -z "$PID" ]; then PID="skyglider-$(openssl rand -hex 4)"; fi
+          echo "Using project id: $PID"
+          echo "=== create project (ok if it already exists) ==="
+          firebase projects:create "$PID" --display-name "Sky Glider" --json; echo
+          echo "=== enable Realtime Database instance ==="
+          firebase database:instances:create "${PID}-default" --project "$PID" --location us-central1 --json; echo
+          echo "=== create web app ==="
+          firebase apps:create WEB "Sky Glider Web" --project "$PID" --json > app.json; cat app.json; echo
+          APPID=$(node -e "try{const j=require('./app.json');process.stdout.write((j.result&&(j.result.appId||j.result.appsId))||'')}catch(e){}")
+          if [ -z "$APPID" ]; then APPID=$(node -e "const j=require('./app.json');const f=JSON.stringify(j);const m=f.match(/1:[0-9]+:web:[0-9a-f]+/);process.stdout.write(m?m[0]:'')"); fi
+          echo "APPID=$APPID"
+          echo "=== sdk config ==="
+          firebase apps:sdkconfig WEB "$APPID" --project "$PID" --json > sdk.json; echo
+          echo "=====CONFIG_START====="
+          cat sdk.json
+          echo "=====CONFIG_END====="
