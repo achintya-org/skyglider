@@ -88,7 +88,7 @@
     setupInput();
     setMode(MODE.WALK, true);
     if (window.MP) {
-      MP.attach(scene); MP.onChatToggle = onChatToggle;
+      MP.attach(scene, { vehicle: makeVehicle, human: makeRemoteHuman }); MP.onChatToggle = onChatToggle;
       if (MP.available) { const row = document.getElementById("online-row"); if (row) row.classList.remove("hidden"); }
     }
 
@@ -330,6 +330,29 @@
       for (const [wx, wz] of [[0.9, 1.4], [-0.9, 1.4], [0.9, -1.4], [-0.9, -1.4]]) wheel(0.7, 0.3, wx, -0.35, wz);
     }
     return node;
+  }
+
+  // A lightweight humanoid for remote players — mirrors the hero's proportions
+  // and shares the hero's materials (per-player shirt colour is cached).
+  function makeRemoteHuman(col) {
+    const root = new BABYLON.TransformNode("rhuman", scene);
+    const skin = scene.getMaterialByName("skin") || mat("skin", new BABYLON.Color3(0.86, 0.66, 0.52));
+    const pants = scene.getMaterialByName("pants") || mat("pants", new BABYLON.Color3(0.17, 0.19, 0.24));
+    const shoe = scene.getMaterialByName("shoe") || mat("shoe", new BABYLON.Color3(0.08, 0.08, 0.1));
+    const hair = scene.getMaterialByName("hair") || mat("hair", new BABYLON.Color3(0.18, 0.12, 0.08));
+    const shirt = cachedMat("rshirt_" + col.join("_"), col, 0.06);
+    const add = (m, opt, mtl, x, y, z) => {
+      const e = BABYLON.MeshBuilder["Create" + m]("rh", opt, scene);
+      e.material = mtl; e.parent = root; e.position.set(x, y, z); e.isPickable = false; return e;
+    };
+    add("Box", { width: 0.5, height: 0.7, depth: 0.28 }, shirt, 0, 1.15, 0);
+    add("Box", { width: 0.46, height: 0.25, depth: 0.26 }, pants, 0, 0.78, 0);
+    add("Sphere", { diameter: 0.34 }, skin, 0, 1.72, 0.02);
+    add("Sphere", { diameter: 0.37, slice: 0.6 }, hair, 0, 1.78, 0);
+    add("Box", { width: 0.16, height: 0.12, depth: 0.16 }, skin, 0, 1.5, 0);
+    for (const sx of [0.32, -0.32]) { add("Capsule", { radius: 0.085, height: 0.62 }, shirt, sx, 1.11, 0); add("Sphere", { diameter: 0.13 }, skin, sx, 0.8, 0); }
+    for (const sx of [0.13, -0.13]) { add("Capsule", { radius: 0.11, height: 0.78 }, pants, sx, 0.39, 0); add("Box", { width: 0.16, height: 0.12, depth: 0.3 }, shoe, sx, 0.02, 0.07); }
+    return root;
   }
 
   function buildCars(S0, half, G) {
