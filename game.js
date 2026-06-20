@@ -101,7 +101,7 @@
     window.__enter = (type) => {
       if (state !== S.PLAYING || mode !== MODE.WALK) return mode;
       const c = enterables.find((e) => !type || e.type === type);
-      if (c) { heroMesh.position.set(c.node.position.x + 2, 1.3, c.node.position.z); enterCar(c); }
+      if (c) { if (!c.node) spawnVehicle(c); heroMesh.position.set(c.x + 2, 1.3, c.z); enterCar(c); }
       return mode;
     };
 
@@ -338,10 +338,10 @@
       const z = onX ? lane + (Math.random() < 0.5 ? 5 : -5) : along;
       const dir = Math.random() < 0.5 ? 1 : -1;
       const rotY = onX ? (dir > 0 ? Math.PI / 2 : -Math.PI / 2) : (dir > 0 ? 0 : Math.PI);
-      const node = makeVehicle("car", x, z, rotY, CAR_COLORS[i % CAR_COLORS.length]);
-      traffic.push({ node, onX, dir, speed: 7 + Math.random() * 7 });
+      traffic.push({ onX, dir, speed: 7 + Math.random() * 7, x, z, rotY, col: CAR_COLORS[i % CAR_COLORS.length], node: null });
     }
   }
+  function spawnTraffic(it) { it.node = makeVehicle("car", it.x, it.z, it.rotY, it.col); }
 
   // Enterable, parked vehicles you can drive — a mix of cars and bikes.
   function buildVehicles() {
@@ -355,9 +355,31 @@
       const col = type === "heli" ? [[0.88, 0.32, 0.2], [0.15, 0.55, 0.78]][i % 2]
         : type === "bike" ? [[0.1, 0.1, 0.12], [0.7, 0.15, 0.15]][i % 2]
           : CAR_COLORS[(i + 2) % CAR_COLORS.length];
-      const node = makeVehicle(type, x, z, rotY, col);
-      enterables.push({ node, type, rotor: node.metadata && node.metadata.rotor, tailRotor: node.metadata && node.metadata.tailRotor });
+      enterables.push({ type, x, z, rotY, col, node: null, rotor: null, tailRotor: null });
     });
+  }
+  function spawnVehicle(it) {
+    it.node = makeVehicle(it.type, it.x, it.z, it.rotY, it.col);
+    if (it.node.metadata) { it.rotor = it.node.metadata.rotor; it.tailRotor = it.node.metadata.tailRotor; }
+  }
+
+  // ---- Lazy actor manager: meshes exist only near the player -------------
+  // Cheap distance checks each frame; hysteresis (spawn < despawn) avoids churn.
+  function manageActors(dt, p) {
+    ensureList(enterables, spawnVehicle, 120, 165, p, (it) => it === drivingCar);
+    ensureList(traffic, spawnTraffic, 130, 175, p, null);
+    ensureList(peds, spawnPed, 110, 150, p, null);
+  }
+  function ensureList(list, makeFn, sR, dR, p, keep) {
+    const s2 = sR * sR, d2 = dR * dR;
+    for (const it of list) {
+      const dx = it.x - p.x, dz = it.z - p.z, dd = dx * dx + dz * dz;
+      if (!it.node && dd < s2) makeFn(it);
+      else if (it.node && dd > d2 && !(keep && keep(it))) disposeActor(it);
+    }
+  }
+  function disposeActor(it) {
+    it.node.dispose(false, true); it.node = null; it.rotor = null; it.tailRotor = null; it.legL = null; it.legR = null;
   }
 
   // ---- Coastline + ocean (north, +Z) ----
@@ -467,44 +489,51 @@
     door.material = roof.material; door.parent = node; door.position.set(0, 1, d / 2 + 0.02);
   }
 
-  // ---- Pedestrians strolling the sidewalks ----
+  // ---- Pedestrians strolling the sidewalks (lazy) ----
+  const PED_SHIRTS = [[0.82, 0.3, 0.3], [0.2, 0.42, 0.72], [0.3, 0.62, 0.42], [0.72, 0.62, 0.24], [0.6, 0.32, 0.6], [0.85, 0.85, 0.88]];
   function buildPedestrians() {
-    const skin = scene.getMaterialByName("pedSkin") || mat("pedSkin", new BABYLON.Color3(0.82, 0.62, 0.5));
-    const shirts = [[0.82, 0.3, 0.3], [0.2, 0.42, 0.72], [0.3, 0.62, 0.42], [0.72, 0.62, 0.24], [0.6, 0.32, 0.6], [0.85, 0.85, 0.88]];
     for (let i = 0; i < 16; i++) {
       const onX = Math.random() < 0.5;
       const lane = (Math.floor(Math.random() * 9) - 4) * 120 + (Math.random() < 0.5 ? 11 : -11);
       const start = rand(440);
-      const node = new BABYLON.TransformNode("ped" + i, scene);
-      node.position.set(onX ? start : lane, 0, onX ? lane : start);
-      const dir = Math.random() < 0.5 ? 1 : -1;
-      const base = onX ? Math.PI / 2 : 0;
-      node.rotation.y = base + (dir > 0 ? 0 : Math.PI);
-      const sm = new BABYLON.StandardMaterial("ps" + i, scene);
-      const col = shirts[i % shirts.length];
-      sm.diffuseColor = new BABYLON.Color3(col[0], col[1], col[2]);
-      sm.specularColor = new BABYLON.Color3(0.05, 0.05, 0.05);
-      const torso = BABYLON.MeshBuilder.CreateBox("pt", { width: 0.4, height: 0.7, depth: 0.24 }, scene);
-      torso.material = sm; torso.parent = node; torso.position.y = 1.15; torso.isPickable = false;
-      const head = BABYLON.MeshBuilder.CreateSphere("ph", { diameter: 0.3, segments: 6 }, scene);
-      head.material = skin; head.parent = node; head.position.y = 1.62; head.isPickable = false;
-      const mkLeg = (sx) => {
-        const j = new BABYLON.TransformNode("pl", scene); j.parent = node; j.position.set(sx, 0.8, 0);
-        const l = BABYLON.MeshBuilder.CreateBox("plm", { width: 0.14, height: 0.7, depth: 0.18 }, scene);
-        l.material = sm; l.parent = j; l.position.y = -0.35; l.isPickable = false; return j;
-      };
-      peds.push({ node, legL: mkLeg(0.1), legR: mkLeg(-0.1), onX, dir, base, speed: 1.1 + Math.random() * 1.2, range: 60 + Math.random() * 120, travel: 0, phase: Math.random() * 6 });
+      peds.push({
+        onX, dir: Math.random() < 0.5 ? 1 : -1, base: onX ? Math.PI / 2 : 0,
+        speed: 1.1 + Math.random() * 1.2, range: 60 + Math.random() * 120, travel: 0, phase: Math.random() * 6,
+        x: onX ? start : lane, z: onX ? lane : start, col: PED_SHIRTS[i % PED_SHIRTS.length], node: null, legL: null, legR: null,
+      });
     }
+  }
+  function spawnPed(it) {
+    const skin = scene.getMaterialByName("pedSkin") || mat("pedSkin", new BABYLON.Color3(0.82, 0.62, 0.5));
+    const node = new BABYLON.TransformNode("ped", scene);
+    node.position.set(it.x, 0, it.z);
+    node.rotation.y = it.base + (it.dir > 0 ? 0 : Math.PI);
+    const sm = new BABYLON.StandardMaterial("ps", scene);
+    sm.diffuseColor = new BABYLON.Color3(it.col[0], it.col[1], it.col[2]);
+    sm.specularColor = new BABYLON.Color3(0.05, 0.05, 0.05);
+    const torso = BABYLON.MeshBuilder.CreateBox("pt", { width: 0.4, height: 0.7, depth: 0.24 }, scene);
+    torso.material = sm; torso.parent = node; torso.position.y = 1.15; torso.isPickable = false;
+    const head = BABYLON.MeshBuilder.CreateSphere("ph", { diameter: 0.3, segments: 6 }, scene);
+    head.material = skin; head.parent = node; head.position.y = 1.62; head.isPickable = false;
+    const mkLeg = (sx) => {
+      const j = new BABYLON.TransformNode("pl", scene); j.parent = node; j.position.set(sx, 0.8, 0);
+      const l = BABYLON.MeshBuilder.CreateBox("plm", { width: 0.14, height: 0.7, depth: 0.18 }, scene);
+      l.material = sm; l.parent = j; l.position.y = -0.35; l.isPickable = false; return j;
+    };
+    it.node = node; it.legL = mkLeg(0.1); it.legR = mkLeg(-0.1);
   }
   function animatePedestrians(dt) {
     for (const p of peds) {
       const ax = p.onX ? "x" : "z";
-      p.node.position[ax] += p.dir * p.speed * dt;
+      p[ax] += p.dir * p.speed * dt;
       p.travel += p.speed * dt;
-      if (p.travel > p.range) { p.travel = 0; p.dir *= -1; p.node.rotation.y = p.base + (p.dir > 0 ? 0 : Math.PI); }
+      if (p.travel > p.range) { p.travel = 0; p.dir *= -1; if (p.node) p.node.rotation.y = p.base + (p.dir > 0 ? 0 : Math.PI); }
       p.phase += dt * 5;
-      const sw = Math.sin(p.phase) * 0.5;
-      p.legL.rotation.x = sw; p.legR.rotation.x = -sw;
+      if (p.node) {
+        p.node.position[ax] = p[ax];
+        const sw = Math.sin(p.phase) * 0.5;
+        p.legL.rotation.x = sw; p.legR.rotation.x = -sw;
+      }
     }
   }
 
@@ -638,11 +667,10 @@
   // Cars cruise along their road lane and wrap around at the city edge.
   function animateTraffic(dt) {
     for (const t of traffic) {
-      const d = t.dir * t.speed * dt;
       const ax = t.onX ? "x" : "z";
-      t.node.position[ax] += d;
-      if (t.node.position[ax] > 640) t.node.position[ax] = -640;
-      else if (t.node.position[ax] < -640) t.node.position[ax] = 640;
+      t[ax] += t.dir * t.speed * dt;
+      if (t[ax] > 640) t[ax] = -640; else if (t[ax] < -640) t[ax] = 640;
+      if (t.node) t.node.position[ax] = t[ax];
     }
   }
 
@@ -746,6 +774,7 @@
     animateVehicles(dt);
     animatePedestrians(dt);
     animateBirds(dt);
+    manageActors(dt, heroMesh.position);
     if (state !== S.PLAYING) { animateIdle(dt); updateCamera(dt); return; }
 
     // Unified 4-direction intent — arrow keys mirror the touch stick exactly.
@@ -825,7 +854,7 @@
   // Spin every helicopter's rotors (faster for the one being piloted).
   function animateVehicles(dt) {
     for (const c of enterables) {
-      if (!c.rotor) continue;
+      if (!c.node || !c.rotor) continue;
       const fast = c === drivingCar;
       c.rotor.rotation.y += (fast ? 32 : 13) * dt;
       if (c.tailRotor) c.tailRotor.rotation.x += (fast ? 42 : 17) * dt;
@@ -842,8 +871,8 @@
   function nearestCar() {
     const p = heroMesh.position; let best = null, bd = ENTER_DIST * ENTER_DIST;
     for (const c of enterables) {
-      const dx = c.node.position.x - p.x, dz = c.node.position.z - p.z, d = dx * dx + dz * dz;
-      if (d < bd) { bd = d; best = c; }
+      const dx = c.x - p.x, dz = c.z - p.z, d = dx * dx + dz * dz;
+      if (d < bd && c.node) { bd = d; best = c; }
     }
     return best;
   }
@@ -979,8 +1008,8 @@
   }
   function toggleMode() { setMode(mode === MODE.FLY ? MODE.WALK : MODE.FLY); }
   function tryEnterExit() {
-    if (mode === MODE.DRIVE) return exitCar();
-    if (mode === MODE.WALK) { const c = nearestCar(); if (c) enterCar(c); }
+    if (mode === MODE.DRIVE || mode === MODE.HELI) return exitCar();
+    if (mode === MODE.WALK) { const c = nearestCar(); if (c && c.node) enterCar(c); }
   }
 
   function updateHUD() {
