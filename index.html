@@ -3,74 +3,81 @@
 <head>
   <meta charset="UTF-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no, viewport-fit=cover" />
-  <meta name="theme-color" content="#0b1220" />
-  <meta name="description" content="Sky Glider — a 3D winged-superhero flight game with real physics. Fly a human through rings, dodge the towers." />
-  <title>Sky Glider — 3D Flight</title>
+  <meta name="theme-color" content="#0a0f1a" />
+  <meta name="description" content="Sky Glider — a calm, professional 3D free-flight experience with real physics." />
+  <title>Sky Glider</title>
   <link rel="manifest" href="./manifest.webmanifest" />
   <link rel="icon" type="image/svg+xml" href="./icons/icon.svg" />
   <link rel="apple-touch-icon" href="./icons/icon-192.png" />
-  <link rel="stylesheet" href="./styles.css?v=3d2" />
+  <link rel="stylesheet" href="./styles.css?v=ff1" />
 </head>
 <body>
   <canvas id="renderCanvas" touch-action="none"></canvas>
 
   <!-- Heads-up display -->
   <div id="hud" class="hidden">
-    <div id="crosshair">+</div>
-    <div id="hud-left">
-      <div class="gauge"><span class="label">SPEED</span><span id="speed">0</span><span class="unit">km/h</span></div>
-      <div class="gauge"><span class="label">ALT</span><span id="alt">0</span><span class="unit">m</span></div>
+    <button id="pause-btn" aria-label="Pause">⏸</button>
+    <div id="dot"></div>
+    <div id="readout">
+      <div class="stat mode-stat"><span class="num" id="mode">ON FOOT</span></div>
+      <div class="divider"></div>
+      <div class="stat"><span class="num" id="speed">0</span><span class="lbl">km/h</span></div>
+      <div class="divider"></div>
+      <div class="stat"><span class="num" id="alt">0</span><span class="lbl">m altitude</span></div>
+      <div class="divider"></div>
+      <div class="stat boost">
+        <span class="lbl">boost</span>
+        <div id="boost-bar"><div id="boost-fill"></div></div>
+      </div>
     </div>
-    <div id="hud-right">
-      <div class="gauge big"><span class="label">RINGS</span><span id="score">0</span></div>
-      <div class="gauge"><span class="label">TIME</span><span id="time">0.0</span><span class="unit">s</span></div>
-    </div>
-    <div id="boost-wrap"><div class="label">BOOST</div><div id="boost-bar"><div id="boost-fill"></div></div></div>
   </div>
 
-  <!-- Touch controls (shown on touch devices) -->
+  <!-- Touch controls -->
   <div id="touch" class="hidden">
     <div id="stick-zone"><div id="stick-base"><div id="stick-knob"></div></div></div>
     <div id="touch-buttons">
+      <button id="btn-down" class="tbtn">FLY</button>
       <button id="btn-boost" class="tbtn">BOOST</button>
-      <button id="btn-up" class="tbtn">▲</button>
-      <button id="btn-down" class="tbtn">▼</button>
+      <button id="btn-up" class="tbtn">JUMP</button>
     </div>
   </div>
 
   <!-- Loading -->
   <div id="loading" class="screen">
     <div class="spinner"></div>
-    <p>Loading flight engine…</p>
+    <p class="muted">Preparing the sky…</p>
   </div>
 
   <!-- Menu -->
   <div id="menu" class="screen hidden">
-    <h1>Sky&nbsp;Glider</h1>
-    <p class="tagline">Winged flight · real physics</p>
-    <button id="play-btn" class="btn">Take Off</button>
-    <div class="controls-help">
-      <div class="kbd-row"><b>Mouse</b> steer (click to lock)</div>
-      <div class="kbd-row"><b>W / S</b> thrust / brake &nbsp; <b>A / D</b> roll</div>
-      <div class="kbd-row"><b>Space</b> boost &nbsp; <b>Q / E</b> up / down</div>
-      <div class="kbd-row"><b>Goal</b> fly through the glowing rings, dodge the towers</div>
+    <div class="panel">
+      <div class="wordmark">SKY&nbsp;GLIDER</div>
+      <p class="sub">Open city · walk or fly anywhere</p>
+      <button id="play-btn" class="btn">Enter the City</button>
+      <div class="help">
+        <div><kbd>F</kbd><span>Walk / Fly</span></div>
+        <div><kbd>Mouse</kbd><span>Look (on foot)</span></div>
+        <div><kbd>WASD</kbd><kbd>↑↓←→</kbd><span>Move &amp; steer flight</span></div>
+        <div><kbd>Shift</kbd><span>Sprint / Boost</span></div>
+        <div><kbd>Space</kbd><span>Jump / Boost</span></div>
+        <div><kbd>Esc</kbd><span>Pause</span></div>
+      </div>
     </div>
-    <p class="best">Best: <span id="menu-best">0</span> rings</p>
   </div>
 
-  <!-- Game over -->
-  <div id="gameover" class="screen hidden">
-    <h2>You Crashed</h2>
-    <p class="final"><span id="final-score">0</span> rings · <span id="final-time">0.0</span>s</p>
-    <p class="best">Best: <span id="go-best">0</span> rings</p>
-    <button id="restart-btn" class="btn">Fly Again</button>
-    <p class="hint">Press R or click</p>
+  <!-- Pause -->
+  <div id="pause" class="screen hidden">
+    <div class="panel">
+      <div class="wordmark small">PAUSED</div>
+      <button id="resume-btn" class="btn">Resume</button>
+      <button id="menu-btn" class="btn ghost">Main Menu</button>
+    </div>
   </div>
 
   <p id="err" class="hidden"></p>
 
-  <script src="./vendor/babylon.js?v=3d2"></script>
-  <script src="./vendor/HavokPhysics_umd.js?v=3d2"></script>
-  <script src="./game.js?v=3d2"></script>
+  <script src="./vendor/babylon.js?v=ff1"></script>
+  <script src="./vendor/HavokPhysics_umd.js?v=ff1"></script>
+  <script src="./game.js?v=ff1"></script>
 </body>
 </html>

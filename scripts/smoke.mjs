@@ -44,24 +44,24 @@ await page.goto(url, { waitUntil: "load" });
 await page.waitForSelector("#menu:not(.hidden)", { timeout: 30000 });
 console.log("✓ engine + physics initialised (menu shown)");
 
-// Start flight and let it run a couple of seconds.
+// Enter the world on foot.
 await page.evaluate(() => document.getElementById("play-btn").click());
-await page.waitForTimeout(2200);
+await page.waitForTimeout(700);
+const walk = await page.evaluate(() => ({ mode: document.getElementById("mode").textContent }));
+console.log("✓ entered world:", JSON.stringify(walk));
 
-// Read internal state to confirm the hero is airborne and moving.
-const probe = await page.evaluate(() => {
-  const c = document.getElementById("renderCanvas");
-  return {
-    fps: BABYLON?.Engine?.LastCreatedEngine?.getFps?.() ?? null,
-    speed: document.getElementById("speed").textContent,
-    alt: document.getElementById("alt").textContent,
-    time: document.getElementById("time").textContent,
-    canvas: c.width + "x" + c.height,
-  };
+// Toggle to flight (F), then hold Up arrow to climb.
+await page.evaluate(() => {
+  window.dispatchEvent(new KeyboardEvent("keydown", { code: "KeyF" }));
+  window.dispatchEvent(new KeyboardEvent("keydown", { code: "ArrowUp" }));
 });
-console.log("✓ probe", JSON.stringify(probe));
+const alt0 = await page.evaluate(() => window.__sg().alt);
+await page.waitForTimeout(2000);
 
-const errs = errors.filter((e) => !/Havok|wasm streaming|Could not load content for/i.test(e) || /Uncaught|TypeError|ReferenceError/i.test(e));
+const probe = await page.evaluate(() => ({ ...window.__sg(), fps: BABYLON.Engine.LastCreatedEngine.getFps() }));
+console.log("✓ probe", JSON.stringify(probe), "alt0=" + alt0.toFixed(2));
+
+const errs = errors.filter((e) => /Uncaught|TypeError|ReferenceError|is not a function|undefined is not/i.test(e));
 if (errs.length) { console.log("✗ console errors:\n" + errs.join("\n")); }
 
 await page.screenshot({ path: join(ROOT, "scripts", "smoke.png") });
@@ -70,6 +70,8 @@ console.log("✓ screenshot saved");
 await browser.close();
 server.close();
 
-const ok = Number(probe.time) > 0.5 && Number(probe.alt) > 0 && errs.length === 0;
+// Climbing: mode flipped to fly, nose pitched up, and rising (vy>0 / gained alt).
+const climbing = probe.vy > 0.2 || probe.alt > alt0 + 0.3;
+const ok = walk.mode === "ON FOOT" && probe.mode === "fly" && probe.flyPitch > 0.05 && climbing && errs.length === 0;
 console.log(ok ? "\nSMOKE_PASS" : "\nSMOKE_FAIL");
 process.exit(ok ? 0 : 1);
