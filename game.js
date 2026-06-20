@@ -18,6 +18,7 @@
     hud: $("hud"), touch: $("touch"), loading: $("loading"), menu: $("menu"),
     pause: $("pause"), err: $("err"),
     speed: $("speed"), alt: $("alt"), mode: $("mode"), area: $("area"), boostFill: $("boost-fill"),
+    prompt: $("prompt"),
   };
 
   function fail(msg, e) {
@@ -30,6 +31,9 @@
   // ---- Tunables -----------------------------------------------------------
   const GRAVITY = 9.81;
   const WALK_SPEED = 5.2, RUN_SPEED = 10, JUMP_V = 7.6, WALK_ACCEL = 12;
+  // Arcade car driving
+  const CAR_ACCEL = 16, CAR_MAX = 30, CAR_REVERSE = 11, CAR_FRICTION = 0.9, CAR_STEER = 2.0, CAR_R = 1.7, ENTER_DIST = 6;
+  const HELI_ACCEL = 15, HELI_UP = 11, HELI_DRAG = 1.2, HELI_MAX = 34, HELI_YAW = 1.4;
   // Flight is heading-based: arrows/WASD steer a heading, the glider cruises
   // along it with momentum. Hold Up to keep pitching up and climb, etc.
   const FLY_CRUISE = 22, FLY_MAX_BOOST = 62, FLY_RESPONSE = 2.4, STEER_RATE = 1.7;
@@ -40,11 +44,12 @@
   // ---- State --------------------------------------------------------------
   const S = { LOADING: 0, MENU: 1, PLAYING: 2, PAUSED: 3 };
   let state = S.LOADING;
-  const MODE = { WALK: "walk", FLY: "fly" };
+  const MODE = { WALK: "walk", FLY: "fly", DRIVE: "drive", HELI: "heli" };
   let mode = MODE.WALK;
 
   let engine, scene, heroMesh, heroBody, model, joints = {}, cam, shadowGen;
   let buildings = [], water, traffic = [], peds = [], birds = [];
+  let enterables = [], obstacles = [], drivingCar = null, carHeading = 0, carSpeed = 0, heliVel = null;
   let camYaw = 0, camPitch = 0.25, modelYaw = 0, flyYaw = 0, flyPitch = 0, boostE = 1, animPhase = 0, animT = 0;
   let grounded = false, pointerLocked = false, lockedOnce = false;
   const keys = {};
@@ -87,8 +92,17 @@
     window.__sg = () => ({
       state, mode, alt: heroMesh.position.y,
       vy: heroBody.getLinearVelocity().y,
-      speed: heroBody.getLinearVelocity().length(), flyPitch,
+      speed: heroBody.getLinearVelocity().length(), flyPitch, carSpeed,
+      heliVy: heliVel ? heliVel.y : 0,
+      px: heroMesh.position.x, pz: heroMesh.position.z,
+      cars: enterables.length,
     });
+    window.__enter = (type) => {
+      if (state !== S.PLAYING || mode !== MODE.WALK) return mode;
+      const c = enterables.find((e) => !type || e.type === type);
+      if (c) { heroMesh.position.set(c.node.position.x + 2, 1.3, c.node.position.z); enterCar(c); }
+      return mode;
+    };
 
     engine.runRenderLoop(() => {
       const dt = Math.min(engine.getDeltaTime() / 1000, 0.05);
@@ -161,6 +175,7 @@
     buildOcean();
     buildVillage();
     buildNature();
+    buildVehicles();
     buildPedestrians();
     buildBirds();
   }
@@ -244,15 +259,76 @@
       b.receiveShadows = true; shadowGen.addShadowCaster(b);
       new BABYLON.PhysicsAggregate(b, BABYLON.PhysicsShapeType.BOX, { mass: 0, friction: 0.6 }, scene);
       buildings.push(b);
+      obstacles.push({ x: cx, z: cz, hw: fw / 2 + 1.6, hd: fd / 2 + 1.6 });
     }
 
     buildCars(S0, half, G);
   }
 
+  const CAR_COLORS = [[0.8, 0.2, 0.2], [0.15, 0.35, 0.8], [0.9, 0.8, 0.2], [0.9, 0.9, 0.92], [0.12, 0.12, 0.14], [0.2, 0.6, 0.4]];
+
+  // Build a vehicle (car or bike) as a TransformNode facing +Z. Returns the node.
+  function makeVehicle(type, x, z, rotY, col) {
+    const node = new BABYLON.TransformNode(type, scene);
+    node.position.set(x, type === "bike" ? 0.6 : type === "heli" ? 1.2 : 0.9, z); node.rotation.y = rotY;
+    const cm = new BABYLON.StandardMaterial("vMat", scene);
+    cm.diffuseColor = new BABYLON.Color3(col[0], col[1], col[2]);
+    cm.specularColor = new BABYLON.Color3(0.4, 0.4, 0.4);
+    const wheelMat = scene.getMaterialByName("wheelMat") || mat("wheelMat", new BABYLON.Color3(0.05, 0.05, 0.06));
+    const wheel = (dia, thick, px, py, pz) => {
+      const w = BABYLON.MeshBuilder.CreateCylinder("w", { diameter: dia, height: thick, tessellation: 12 }, scene);
+      w.rotation.z = Math.PI / 2; w.position.set(px, py, pz); w.material = wheelMat; w.parent = node; w.isPickable = false;
+    };
+    if (type === "heli") {
+      const dark = scene.getMaterialByName("heliDark") || mat("heliDark", new BABYLON.Color3(0.08, 0.08, 0.1));
+      const body = BABYLON.MeshBuilder.CreateSphere("hb", { diameter: 1, segments: 10 }, scene);
+      body.scaling.set(1.7, 1.5, 3.2); body.position.y = 1.2; body.material = cm; body.parent = node;
+      body.isPickable = false; shadowGen.addShadowCaster(body);
+      const tail = BABYLON.MeshBuilder.CreateBox("ht", { width: 0.28, height: 0.28, depth: 3.2 }, scene);
+      tail.position.set(0, 1.45, -2.7); tail.material = cm; tail.parent = node; tail.isPickable = false;
+      const fin = BABYLON.MeshBuilder.CreateBox("hfin", { width: 0.1, height: 0.8, depth: 0.5 }, scene);
+      fin.position.set(0, 1.85, -4.2); fin.material = cm; fin.parent = node; fin.isPickable = false;
+      for (const sx of [0.75, -0.75]) {
+        const skid = BABYLON.MeshBuilder.CreateBox("hsk", { width: 0.1, height: 0.1, depth: 2.6 }, scene);
+        skid.position.set(sx, 0.15, 0.2); skid.material = dark; skid.parent = node; skid.isPickable = false;
+        const strut = BABYLON.MeshBuilder.CreateBox("hstr", { width: 0.08, height: 0.6, depth: 0.08 }, scene);
+        strut.position.set(sx, 0.5, 0.2); strut.material = dark; strut.parent = node; strut.isPickable = false;
+      }
+      const rotor = new BABYLON.TransformNode("rotor", scene); rotor.parent = node; rotor.position.y = 2.05;
+      for (const r of [0, Math.PI / 2]) {
+        const blade = BABYLON.MeshBuilder.CreateBox("hbl", { width: 6.4, height: 0.07, depth: 0.34 }, scene);
+        blade.rotation.y = r; blade.material = dark; blade.parent = rotor; blade.isPickable = false;
+      }
+      const tailRotor = new BABYLON.TransformNode("trotor", scene); tailRotor.parent = node; tailRotor.position.set(0.18, 1.85, -4.2);
+      const tb = BABYLON.MeshBuilder.CreateBox("htb", { width: 0.08, height: 1.5, depth: 0.12 }, scene);
+      tb.material = dark; tb.parent = tailRotor; tb.isPickable = false;
+      node.metadata = { rotor, tailRotor };
+    } else if (type === "bike") {
+      const frame = BABYLON.MeshBuilder.CreateBox("bf", { width: 0.26, height: 0.4, depth: 1.7 }, scene);
+      frame.material = cm; frame.parent = node; frame.position.y = 0.35; shadowGen.addShadowCaster(frame);
+      const seat = BABYLON.MeshBuilder.CreateBox("bs", { width: 0.3, height: 0.18, depth: 0.7 }, scene);
+      seat.material = mat("seatMat", new BABYLON.Color3(0.08, 0.08, 0.1)); seat.parent = node; seat.position.set(0, 0.6, -0.45);
+      const bar = BABYLON.MeshBuilder.CreateBox("bb", { width: 0.7, height: 0.08, depth: 0.08 }, scene);
+      bar.material = seat.material; bar.parent = node; bar.position.set(0, 0.7, 0.7);
+      wheel(1.0, 0.16, 0, 0.0, 0.85); wheel(1.0, 0.16, 0, 0.0, -0.85);
+      // seated rider so it never looks empty
+      const skin = scene.getMaterialByName("skin") || mat("skin", new BABYLON.Color3(0.86, 0.66, 0.52));
+      const rb = BABYLON.MeshBuilder.CreateBox("rb", { width: 0.42, height: 0.6, depth: 0.3 }, scene);
+      rb.material = mat("riderMat", new BABYLON.Color3(0.2, 0.22, 0.28)); rb.parent = node; rb.position.set(0, 1.0, -0.35);
+      rb.rotation.x = 0.3; shadowGen.addShadowCaster(rb);
+      const rh = BABYLON.MeshBuilder.CreateSphere("rh", { diameter: 0.3, segments: 6 }, scene);
+      rh.material = skin; rh.parent = node; rh.position.set(0, 1.42, -0.2);
+    } else {
+      const body = BABYLON.MeshBuilder.CreateBox("cb", { width: 2, height: 0.7, depth: 4.4 }, scene);
+      body.material = cm; body.parent = node; shadowGen.addShadowCaster(body);
+      const cabin = BABYLON.MeshBuilder.CreateBox("cc", { width: 1.8, height: 0.6, depth: 2.2 }, scene);
+      cabin.material = cm; cabin.parent = node; cabin.position.set(0, 0.55, -0.2);
+      for (const [wx, wz] of [[0.9, 1.4], [-0.9, 1.4], [0.9, -1.4], [-0.9, -1.4]]) wheel(0.7, 0.3, wx, -0.35, wz);
+    }
+    return node;
+  }
+
   function buildCars(S0, half, G) {
-    const colors = [[0.8, 0.2, 0.2], [0.15, 0.35, 0.8], [0.9, 0.8, 0.2], [0.9, 0.9, 0.92], [0.12, 0.12, 0.14], [0.2, 0.6, 0.4]];
-    const wheelMat = new BABYLON.StandardMaterial("wheelMat", scene);
-    wheelMat.diffuseColor = new BABYLON.Color3(0.05, 0.05, 0.06);
     for (let i = 0; i < 16; i++) {
       const lane = (Math.floor(Math.random() * G) - half) * S0;
       const along = rand((G - 1) * S0 * 0.5);
@@ -260,23 +336,27 @@
       const x = onX ? along : lane + (Math.random() < 0.5 ? 5 : -5);
       const z = onX ? lane + (Math.random() < 0.5 ? 5 : -5) : along;
       const dir = Math.random() < 0.5 ? 1 : -1;
-      const car = new BABYLON.TransformNode("car" + i, scene);
-      car.position.set(x, 0.9, z);
-      car.rotation.y = onX ? (dir > 0 ? Math.PI / 2 : -Math.PI / 2) : (dir > 0 ? 0 : Math.PI);
-      traffic.push({ node: car, onX, dir, speed: 7 + Math.random() * 7 });
-      const col = colors[i % colors.length];
-      const cm = new BABYLON.StandardMaterial("carMat" + i, scene);
-      cm.diffuseColor = new BABYLON.Color3(col[0], col[1], col[2]);
-      cm.specularColor = new BABYLON.Color3(0.4, 0.4, 0.4);
-      const body = BABYLON.MeshBuilder.CreateBox("cb", { width: 2, height: 0.7, depth: 4.4 }, scene);
-      body.material = cm; body.parent = car; shadowGen.addShadowCaster(body);
-      const cabin = BABYLON.MeshBuilder.CreateBox("cc", { width: 1.8, height: 0.6, depth: 2.2 }, scene);
-      cabin.material = cm; cabin.parent = car; cabin.position.set(0, 0.55, -0.2);
-      for (const [wx, wz] of [[0.9, 1.4], [-0.9, 1.4], [0.9, -1.4], [-0.9, -1.4]]) {
-        const w = BABYLON.MeshBuilder.CreateCylinder("w", { diameter: 0.7, height: 0.3, tessellation: 10 }, scene);
-        w.rotation.z = Math.PI / 2; w.position.set(wx, -0.35, wz); w.material = wheelMat; w.parent = car;
-      }
+      const rotY = onX ? (dir > 0 ? Math.PI / 2 : -Math.PI / 2) : (dir > 0 ? 0 : Math.PI);
+      const node = makeVehicle("car", x, z, rotY, CAR_COLORS[i % CAR_COLORS.length]);
+      traffic.push({ node, onX, dir, speed: 7 + Math.random() * 7 });
     }
+  }
+
+  // Enterable, parked vehicles you can drive — a mix of cars and bikes.
+  function buildVehicles() {
+    const spots = [
+      ["car", 3, 4, 0], ["bike", -5, 5, Math.PI], ["car", 22, -8, Math.PI / 2],
+      ["bike", -24, 10, -Math.PI / 2], ["car", 9, 95, 0], ["car", -100, -9, Math.PI / 2],
+      ["bike", 120, 14, 0], ["car", -130, 100, Math.PI],
+      ["heli", 44, 0, -36], ["heli", -150, 130, Math.PI / 2],
+    ];
+    spots.forEach(([type, x, z, rotY], i) => {
+      const col = type === "heli" ? [[0.88, 0.32, 0.2], [0.15, 0.55, 0.78]][i % 2]
+        : type === "bike" ? [[0.1, 0.1, 0.12], [0.7, 0.15, 0.15]][i % 2]
+          : CAR_COLORS[(i + 2) % CAR_COLORS.length];
+      const node = makeVehicle(type, x, z, rotY, col);
+      enterables.push({ node, type, rotor: node.metadata && node.metadata.rotor, tailRotor: node.metadata && node.metadata.tailRotor });
+    });
   }
 
   // ---- Coastline + ocean (north, +Z) ----
@@ -377,6 +457,7 @@
     walls.material = wallMat; walls.parent = node; walls.position.y = h / 2;
     walls.receiveShadows = true; shadowGen.addShadowCaster(walls);
     new BABYLON.PhysicsAggregate(walls, BABYLON.PhysicsShapeType.BOX, { mass: 0, friction: 0.7 }, scene);
+    obstacles.push({ x, z, hw: Math.max(w, d) / 2 + 1.4, hd: Math.max(w, d) / 2 + 1.4 });
     const roof = BABYLON.MeshBuilder.CreateCylinder("roof",
       { diameterTop: 0, diameterBottom: Math.hypot(w, d) * 0.92, height: 2.4, tessellation: 4 }, scene);
     roof.material = scene.getMaterialByName("roofMat") || mat("roofMat", new BABYLON.Color3(0.5, 0.22, 0.18));
@@ -521,7 +602,13 @@
   function updateCamera(dt, instant) {
     const heroPos = heroMesh.getAbsolutePosition();
     let target, desired;
-    if (mode === MODE.FLY) {
+    if ((mode === MODE.DRIVE || mode === MODE.HELI) && drivingCar) {
+      const heli = mode === MODE.HELI;
+      const fwd = new BABYLON.Vector3(Math.sin(carHeading), 0, Math.cos(carHeading));
+      const p = drivingCar.node.position;
+      target = new BABYLON.Vector3(p.x, p.y + (heli ? 1.8 : 1.4), p.z).add(fwd.scale(heli ? 2 : 3));
+      desired = new BABYLON.Vector3(p.x, p.y + (heli ? 5 : 4.2), p.z).subtract(fwd.scale(heli ? 14 : 9));
+    } else if (mode === MODE.FLY) {
       // Chase behind the flight heading so "up" on screen is always climb.
       const cp = Math.cos(flyPitch), sp = Math.sin(flyPitch);
       const fwd = new BABYLON.Vector3(Math.sin(flyYaw) * cp, sp, Math.cos(flyYaw) * cp);
@@ -574,8 +661,9 @@
     const onKey = (e, down) => {
       keys[e.code] = down;
       if (navKeys.includes(e.code)) e.preventDefault();
-      if (!down) return;
-      if (e.code === "KeyF" && state === S.PLAYING) toggleMode();
+      if (!down || state !== S.PLAYING) return;
+      if (e.code === "KeyE") tryEnterExit();
+      else if (e.code === "KeyF" && mode !== MODE.DRIVE) toggleMode();
     };
     window.addEventListener("keydown", (e) => onKey(e, true));
     window.addEventListener("keyup", (e) => onKey(e, false));
@@ -635,7 +723,13 @@
     };
     hold($("btn-boost"), (v) => tBoost = v);
     hold($("btn-up"), (v) => tUp = v);
-    $("btn-down").addEventListener("click", () => { if (state === S.PLAYING) toggleMode(); });
+    $("btn-down").addEventListener("click", () => {
+      if (state !== S.PLAYING) return;
+      if (mode === MODE.DRIVE) return exitCar();
+      const c = nearestCar();
+      if (mode === MODE.WALK && c) return enterCar(c);
+      toggleMode();
+    });
   }
 
   // ========================================================================
@@ -646,6 +740,7 @@
     animT += dt;
     scrollWater(dt);
     animateTraffic(dt);
+    animateVehicles(dt);
     animatePedestrians(dt);
     animateBirds(dt);
     if (state !== S.PLAYING) { animateIdle(dt); updateCamera(dt); return; }
@@ -656,11 +751,110 @@
     const kU = keys["ArrowUp"] || keys["KeyW"];
     const kD = keys["ArrowDown"] || keys["KeyS"];
 
-    if (mode === MODE.WALK) updateWalk(dt, kU, kD, kL, kR);
+    if (mode === MODE.DRIVE) updateDrive(dt, kU, kD, kL, kR);
+    else if (mode === MODE.HELI) updateHeli(dt, kU, kD, kL, kR);
+    else if (mode === MODE.WALK) { updateWalk(dt, kU, kD, kL, kR); updatePrompt(); }
     else updateFly(dt, kU, kD, kL, kR);
 
     updateCamera(dt);
     updateHUD();
+  }
+
+  // ---- Driving (arcade) ----
+  function updateDrive(dt, kU, kD, kL, kR) {
+    const throttle = (kU ? 1 : 0) - (kD ? 1 : 0) + tMoveY;
+    const steerIn = (kR ? 1 : 0) - (kL ? 1 : 0) + tMoveX;
+    if (throttle > 0) carSpeed += CAR_ACCEL * throttle * dt;
+    else if (throttle < 0) carSpeed += (carSpeed > 0 ? -CAR_ACCEL * 1.6 : -CAR_ACCEL) * -throttle * dt;
+    carSpeed *= Math.max(0, 1 - CAR_FRICTION * dt);
+    carSpeed = clamp(carSpeed, -CAR_REVERSE, CAR_MAX);
+    // steering scales with (signed) speed so you turn into the direction of travel
+    carHeading += steerIn * CAR_STEER * dt * clamp(carSpeed / 10, -1, 1);
+
+    const node = drivingCar.node;
+    const fx = Math.sin(carHeading), fz = Math.cos(carHeading);
+    const nx = node.position.x + fx * carSpeed * dt;
+    const nz = node.position.z + fz * carSpeed * dt;
+    if (!blocked(nx, node.position.z)) node.position.x = nx; else carSpeed *= 0.2;
+    if (!blocked(node.position.x, nz)) node.position.z = nz; else carSpeed *= 0.2;
+    node.rotation.y = carHeading;
+    heroMesh.position.set(node.position.x, node.position.y, node.position.z);
+  }
+
+  // ---- Helicopter (vertical-takeoff arcade flight) ----
+  function updateHeli(dt, kU, kD, kL, kR) {
+    const shift = keys["ShiftLeft"] || keys["ShiftRight"];
+    carHeading += (((kR ? 1 : 0) - (kL ? 1 : 0)) + tMoveX) * HELI_YAW * dt;
+    const fb = ((kU ? 1 : 0) - (kD ? 1 : 0)) + tMoveY;
+    const up = ((keys["Space"] || tUp ? 1 : 0) - (shift || tDown ? 1 : 0));
+    const fwd = new BABYLON.Vector3(Math.sin(carHeading), 0, Math.cos(carHeading));
+    heliVel = heliVel.add(fwd.scale(fb * HELI_ACCEL * dt)).add(new BABYLON.Vector3(0, up * HELI_UP * dt, 0));
+    heliVel = heliVel.scale(Math.max(0, 1 - HELI_DRAG * dt));
+    if (heliVel.length() > HELI_MAX) heliVel = heliVel.normalize().scale(HELI_MAX);
+
+    const node = drivingCar.node;
+    let nx = node.position.x + heliVel.x * dt, nz = node.position.z + heliVel.z * dt, ny = node.position.y + heliVel.y * dt;
+    if (ny < 1.2) { ny = 1.2; if (heliVel.y < 0) heliVel.y = 0; }
+    const lowBlock = ny < 6;
+    if (!(lowBlock && blocked(nx, node.position.z))) node.position.x = nx; else heliVel.x = 0;
+    if (!(lowBlock && blocked(node.position.x, nz))) node.position.z = nz; else heliVel.z = 0;
+    node.position.y = ny;
+    node.rotation.y = carHeading;
+    node.rotation.x = clamp(fb * 0.18, -0.25, 0.25);   // nose tilt with travel
+    heroMesh.position.set(node.position.x, node.position.y, node.position.z);
+  }
+
+  // Spin every helicopter's rotors (faster for the one being piloted).
+  function animateVehicles(dt) {
+    for (const c of enterables) {
+      if (!c.rotor) continue;
+      const fast = c === drivingCar;
+      c.rotor.rotation.y += (fast ? 32 : 13) * dt;
+      if (c.tailRotor) c.tailRotor.rotation.x += (fast ? 42 : 17) * dt;
+    }
+  }
+
+  function blocked(x, z) {
+    for (const o of obstacles) {
+      if (Math.abs(x - o.x) < o.hw + CAR_R && Math.abs(z - o.z) < o.hd + CAR_R) return true;
+    }
+    return false;
+  }
+
+  function nearestCar() {
+    const p = heroMesh.position; let best = null, bd = ENTER_DIST * ENTER_DIST;
+    for (const c of enterables) {
+      const dx = c.node.position.x - p.x, dz = c.node.position.z - p.z, d = dx * dx + dz * dz;
+      if (d < bd) { bd = d; best = c; }
+    }
+    return best;
+  }
+  function updatePrompt() {
+    if (!ui.prompt) return;
+    const c = nearestCar();
+    ui.prompt.classList.toggle("hidden", !c);
+    if (c) ui.prompt.textContent = c.type === "bike" ? "Press E to ride" : "Press E to drive";
+  }
+  function enterCar(c) {
+    drivingCar = c;
+    mode = c.type === "heli" ? MODE.HELI : MODE.DRIVE;
+    carHeading = c.node.rotation.y; carSpeed = 0; heliVel = BABYLON.Vector3.Zero();
+    model.setEnabled(false);
+    heroBody.setMotionType(BABYLON.PhysicsMotionType.ANIMATED);
+    if (ui.mode) ui.mode.textContent = c.type === "heli" ? "HELICOPTER" : c.type === "bike" ? "RIDING" : "DRIVING";
+    if (ui.prompt) ui.prompt.classList.add("hidden");
+  }
+  function exitCar() {
+    const node = drivingCar.node;
+    drivingCar = null; mode = MODE.WALK;
+    heroBody.setMotionType(BABYLON.PhysicsMotionType.DYNAMIC);
+    heroBody.setGravityFactor(1);
+    const side = new BABYLON.Vector3(Math.cos(carHeading), 0, -Math.sin(carHeading)).scale(2.4);
+    heroMesh.position.set(node.position.x + side.x, Math.max(1.3, node.position.y), node.position.z + side.z);
+    heroBody.setLinearVelocity(BABYLON.Vector3.Zero());
+    camYaw = carHeading;
+    model.setEnabled(true);
+    if (ui.mode) ui.mode.textContent = "ON FOOT";
   }
 
   function updateWalk(dt, kU, kD, kL, kR) {
@@ -762,13 +956,20 @@
     }
     heroBody.setLinearDamping(0);
     if (ui.mode) ui.mode.textContent = mode === MODE.FLY ? "FLYING" : "ON FOOT";
+    if (ui.prompt) ui.prompt.classList.add("hidden");
     if (instant) updateCamera(0, true);
   }
   function toggleMode() { setMode(mode === MODE.FLY ? MODE.WALK : MODE.FLY); }
+  function tryEnterExit() {
+    if (mode === MODE.DRIVE) return exitCar();
+    if (mode === MODE.WALK) { const c = nearestCar(); if (c) enterCar(c); }
+  }
 
   function updateHUD() {
     const v = heroBody.getLinearVelocity();
-    const spd = mode === MODE.FLY ? v.length() : Math.hypot(v.x, v.z);
+    const spd = mode === MODE.DRIVE ? Math.abs(carSpeed)
+      : mode === MODE.HELI ? Math.hypot(heliVel.x, heliVel.z)
+        : mode === MODE.FLY ? v.length() : Math.hypot(v.x, v.z);
     ui.speed.textContent = Math.round(spd * 3.6);
     ui.alt.textContent = Math.max(0, Math.round(heroMesh.position.y - 1));
     ui.boostFill.style.width = (boostE * 100).toFixed(0) + "%";
@@ -802,7 +1003,10 @@
   }
   function toMenu() {
     state = S.MENU;
-    // reset to the downtown plaza, on foot
+    // leave any vehicle and reset to the downtown plaza, on foot
+    drivingCar = null; carSpeed = 0;
+    model.setEnabled(true);
+    heroBody.setMotionType(BABYLON.PhysicsMotionType.DYNAMIC);
     heroMesh.position.set(0, 1.2, 0);
     heroBody.setLinearVelocity(BABYLON.Vector3.Zero());
     camYaw = 0; camPitch = 0.25; flyYaw = 0; flyPitch = 0; boostE = 1;

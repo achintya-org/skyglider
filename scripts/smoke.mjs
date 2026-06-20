@@ -50,8 +50,32 @@ await page.waitForTimeout(700);
 const walk = await page.evaluate(() => ({ mode: document.getElementById("mode").textContent }));
 console.log("✓ entered world:", JSON.stringify(walk));
 
-// Toggle to flight (F), then hold Up arrow to climb.
+// Enter the nearest vehicle (E) and drive forward (Up).
+await page.evaluate(() => window.dispatchEvent(new KeyboardEvent("keydown", { code: "KeyE" })));
+const drive0 = await page.evaluate(() => window.__sg());
+await page.evaluate(() => window.dispatchEvent(new KeyboardEvent("keydown", { code: "ArrowUp" })));
+await page.waitForTimeout(1600);
+const drive = await page.evaluate(() => window.__sg());
+console.log("✓ driving:", JSON.stringify({ mode: drive.mode, carSpeed: +drive.carSpeed.toFixed(2), cars: drive.cars }));
+
+// Exit the car (E).
 await page.evaluate(() => {
+  window.dispatchEvent(new KeyboardEvent("keyup", { code: "ArrowUp" }));
+  window.dispatchEvent(new KeyboardEvent("keydown", { code: "KeyE" }));
+});
+
+// Board a helicopter and ascend (Space).
+await page.evaluate(() => window.__enter("heli"));
+const heli0 = await page.evaluate(() => window.__sg());
+await page.evaluate(() => window.dispatchEvent(new KeyboardEvent("keydown", { code: "Space" })));
+await page.waitForTimeout(1600);
+const heli = await page.evaluate(() => window.__sg());
+console.log("✓ helicopter:", JSON.stringify({ mode: heli.mode, heliVy: +heli.heliVy.toFixed(2) }));
+
+// Exit heli, then take flight (F) and climb (Up).
+await page.evaluate(() => {
+  window.dispatchEvent(new KeyboardEvent("keyup", { code: "Space" }));
+  window.dispatchEvent(new KeyboardEvent("keydown", { code: "KeyE" }));
   window.dispatchEvent(new KeyboardEvent("keydown", { code: "KeyF" }));
   window.dispatchEvent(new KeyboardEvent("keydown", { code: "ArrowUp" }));
 });
@@ -72,6 +96,9 @@ server.close();
 
 // Climbing: mode flipped to fly, nose pitched up, and rising (vy>0 / gained alt).
 const climbing = probe.vy > 0.2 || probe.alt > alt0 + 0.3;
-const ok = walk.mode === "ON FOOT" && probe.mode === "fly" && probe.flyPitch > 0.05 && climbing && errs.length === 0;
+const drove = drive0.mode === "drive" && drive.mode === "drive" && drive.carSpeed > 0.3;
+const heliFlew = heli0.mode === "heli" && heli.mode === "heli" && heli.heliVy > 0.2;
+const ok = walk.mode === "ON FOOT" && drove && heliFlew && probe.mode === "fly" && probe.flyPitch > 0.05 && climbing && errs.length === 0;
+console.log("checks:", JSON.stringify({ walk: walk.mode === "ON FOOT", drove, heliFlew, fly: probe.mode === "fly", climbing }));
 console.log(ok ? "\nSMOKE_PASS" : "\nSMOKE_FAIL");
 process.exit(ok ? 0 : 1);
