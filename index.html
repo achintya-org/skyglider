@@ -3,41 +3,74 @@
 <head>
   <meta charset="UTF-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no, viewport-fit=cover" />
-  <meta name="theme-color" content="#1e3a8a" />
-  <meta name="description" content="Sky Glider — a fast, installable PWA flying game playable offline. Tap, click or press space to fly through the gaps." />
-  <title>Sky Glider</title>
+  <meta name="theme-color" content="#0b1220" />
+  <meta name="description" content="Sky Glider — a 3D winged-superhero flight game with real physics. Fly a human through rings, dodge the towers." />
+  <title>Sky Glider — 3D Flight</title>
   <link rel="manifest" href="./manifest.webmanifest" />
   <link rel="icon" type="image/svg+xml" href="./icons/icon.svg" />
   <link rel="apple-touch-icon" href="./icons/icon-192.png" />
   <link rel="stylesheet" href="./styles.css" />
 </head>
 <body>
-  <div id="game-wrap">
-    <canvas id="game" width="480" height="720" aria-label="Sky Glider game canvas"></canvas>
+  <canvas id="renderCanvas" touch-action="none"></canvas>
 
-    <div id="hud">
-      <div id="score">0</div>
+  <!-- Heads-up display -->
+  <div id="hud" class="hidden">
+    <div id="crosshair">+</div>
+    <div id="hud-left">
+      <div class="gauge"><span class="label">SPEED</span><span id="speed">0</span><span class="unit">km/h</span></div>
+      <div class="gauge"><span class="label">ALT</span><span id="alt">0</span><span class="unit">m</span></div>
     </div>
-
-    <div id="overlay" class="screen">
-      <h1>Sky&nbsp;Glider</h1>
-      <p class="tagline">Fly through the gaps. Don't crash.</p>
-      <button id="start-btn" class="btn">Play</button>
-      <p class="hint">Tap &middot; Click &middot; Space</p>
-      <p class="best">Best: <span id="best-start">0</span></p>
+    <div id="hud-right">
+      <div class="gauge big"><span class="label">RINGS</span><span id="score">0</span></div>
+      <div class="gauge"><span class="label">TIME</span><span id="time">0.0</span><span class="unit">s</span></div>
     </div>
+    <div id="boost-wrap"><div class="label">BOOST</div><div id="boost-bar"><div id="boost-fill"></div></div></div>
+  </div>
 
-    <div id="gameover" class="screen hidden">
-      <h2>Game Over</h2>
-      <p class="final">Score <span id="final-score">0</span></p>
-      <p class="best">Best: <span id="final-best">0</span></p>
-      <button id="restart-btn" class="btn">Play Again</button>
-      <p class="hint">Tap &middot; Click &middot; Space</p>
+  <!-- Touch controls (shown on touch devices) -->
+  <div id="touch" class="hidden">
+    <div id="stick-zone"><div id="stick-base"><div id="stick-knob"></div></div></div>
+    <div id="touch-buttons">
+      <button id="btn-boost" class="tbtn">BOOST</button>
+      <button id="btn-up" class="tbtn">▲</button>
+      <button id="btn-down" class="tbtn">▼</button>
     </div>
   </div>
 
-  <p id="install-tip" class="hidden">📲 Install Sky Glider for offline play <button id="install-btn" class="btn-sm">Install</button></p>
+  <!-- Loading -->
+  <div id="loading" class="screen">
+    <div class="spinner"></div>
+    <p>Loading flight engine…</p>
+  </div>
 
+  <!-- Menu -->
+  <div id="menu" class="screen hidden">
+    <h1>Sky&nbsp;Glider</h1>
+    <p class="tagline">Winged flight · real physics</p>
+    <button id="play-btn" class="btn">Take Off</button>
+    <div class="controls-help">
+      <div class="kbd-row"><b>Mouse</b> steer (click to lock)</div>
+      <div class="kbd-row"><b>W / S</b> thrust / brake &nbsp; <b>A / D</b> roll</div>
+      <div class="kbd-row"><b>Space</b> boost &nbsp; <b>Q / E</b> up / down</div>
+      <div class="kbd-row"><b>Goal</b> fly through the glowing rings, dodge the towers</div>
+    </div>
+    <p class="best">Best: <span id="menu-best">0</span> rings</p>
+  </div>
+
+  <!-- Game over -->
+  <div id="gameover" class="screen hidden">
+    <h2>You Crashed</h2>
+    <p class="final"><span id="final-score">0</span> rings · <span id="final-time">0.0</span>s</p>
+    <p class="best">Best: <span id="go-best">0</span> rings</p>
+    <button id="restart-btn" class="btn">Fly Again</button>
+    <p class="hint">Press R or click</p>
+  </div>
+
+  <p id="err" class="hidden"></p>
+
+  <script src="./vendor/babylon.js"></script>
+  <script src="./vendor/HavokPhysics_umd.js"></script>
   <script src="./game.js"></script>
 </body>
 </html>

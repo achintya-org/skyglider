@@ -1,5 +1,5 @@
-// Sky Glider service worker — offline-first app shell.
-const CACHE = "skyglider-v1";
+// Sky Glider service worker — offline-first app shell (3D build).
+const CACHE = "skyglider-3d-v1";
 const ASSETS = [
   "./",
   "./index.html",
@@ -10,6 +10,9 @@ const ASSETS = [
   "./icons/icon-192.png",
   "./icons/icon-512.png",
   "./icons/icon-maskable-512.png",
+  "./vendor/babylon.js",
+  "./vendor/HavokPhysics_umd.js",
+  "./vendor/HavokPhysics.wasm",
 ];
 
 self.addEventListener("install", (event) => {
@@ -30,15 +33,11 @@ self.addEventListener("fetch", (event) => {
   const req = event.request;
   if (req.method !== "GET") return;
 
-  // Network-first for navigations, falling back to the cached shell offline.
   if (req.mode === "navigate") {
-    event.respondWith(
-      fetch(req).catch(() => caches.match("./index.html"))
-    );
+    event.respondWith(fetch(req).catch(() => caches.match("./index.html")));
     return;
   }
 
-  // Cache-first for static assets.
   event.respondWith(
     caches.match(req).then((cached) => {
       if (cached) return cached;
