@@ -364,8 +364,14 @@
   }
 
   // ---- Lazy actor manager: meshes exist only near the player -------------
-  // Cheap distance checks each frame; hysteresis (spawn < despawn) avoids churn.
-  function manageActors(dt, p) {
+  // Evaluated ONLY when the player has moved a threshold distance — not every
+  // frame. Per-frame cost is one squared-distance compare; the actual scan runs
+  // every ~12 m of travel. Hysteresis (spawn < despawn) avoids churn.
+  let manX = 1e9, manZ = 1e9;
+  function maybeManageActors(p) {
+    const dx = p.x - manX, dz = p.z - manZ;
+    if (dx * dx + dz * dz < 144) return;     // < 12 m moved → nothing to do
+    manX = p.x; manZ = p.z;
     ensureList(enterables, spawnVehicle, 120, 165, p, (it) => it === drivingCar);
     ensureList(traffic, spawnTraffic, 130, 175, p, null);
     ensureList(peds, spawnPed, 110, 150, p, null);
@@ -524,16 +530,15 @@
   }
   function animatePedestrians(dt) {
     for (const p of peds) {
+      if (!p.node) continue;                 // despawned → no work
       const ax = p.onX ? "x" : "z";
       p[ax] += p.dir * p.speed * dt;
       p.travel += p.speed * dt;
-      if (p.travel > p.range) { p.travel = 0; p.dir *= -1; if (p.node) p.node.rotation.y = p.base + (p.dir > 0 ? 0 : Math.PI); }
+      if (p.travel > p.range) { p.travel = 0; p.dir *= -1; p.node.rotation.y = p.base + (p.dir > 0 ? 0 : Math.PI); }
       p.phase += dt * 5;
-      if (p.node) {
-        p.node.position[ax] = p[ax];
-        const sw = Math.sin(p.phase) * 0.5;
-        p.legL.rotation.x = sw; p.legR.rotation.x = -sw;
-      }
+      p.node.position[ax] = p[ax];
+      const sw = Math.sin(p.phase) * 0.5;
+      p.legL.rotation.x = sw; p.legR.rotation.x = -sw;
     }
   }
 
@@ -667,10 +672,11 @@
   // Cars cruise along their road lane and wrap around at the city edge.
   function animateTraffic(dt) {
     for (const t of traffic) {
+      if (!t.node) continue;                 // despawned → no work
       const ax = t.onX ? "x" : "z";
       t[ax] += t.dir * t.speed * dt;
       if (t[ax] > 640) t[ax] = -640; else if (t[ax] < -640) t[ax] = 640;
-      if (t.node) t.node.position[ax] = t[ax];
+      t.node.position[ax] = t[ax];
     }
   }
 
@@ -774,7 +780,7 @@
     animateVehicles(dt);
     animatePedestrians(dt);
     animateBirds(dt);
-    manageActors(dt, heroMesh.position);
+    maybeManageActors(heroMesh.position);
     if (state !== S.PLAYING) { animateIdle(dt); updateCamera(dt); return; }
 
     // Unified 4-direction intent — arrow keys mirror the touch stick exactly.
