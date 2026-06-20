@@ -218,18 +218,19 @@ kbd {
   border: 2px solid rgba(255, 255, 255, 0.4);
 }
 #touch-buttons {
-  position: absolute; right: 22px; bottom: 44px;
-  display: flex; flex-direction: column; gap: 14px; align-items: center;
+  position: absolute; right: 18px; bottom: 30px;
+  display: flex; flex-direction: column; gap: 12px; align-items: center;
   pointer-events: auto;
 }
 .tbtn {
   pointer-events: auto;
-  width: 72px; height: 72px; border-radius: 50%;
+  width: 62px; height: 62px; border-radius: 50%;
   border: 1px solid var(--glass-brd);
   background: rgba(90, 209, 255, 0.18);
-  color: var(--ink); font-weight: 800; font-size: 14px;
+  color: var(--ink); font-weight: 800; font-size: 13px;
   backdrop-filter: blur(6px); -webkit-backdrop-filter: blur(6px);
 }
+.tbtn.act { background: var(--accent-2); color: #0a0f1a; border-color: var(--accent-2); }
 
 #name-input {
   width: 100%;

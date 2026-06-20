@@ -808,13 +808,36 @@
     };
     hold($("btn-boost"), (v) => tBoost = v);
     hold($("btn-up"), (v) => tUp = v);
-    $("btn-down").addEventListener("click", () => {
-      if (state !== S.PLAYING) return;
-      if (mode === MODE.DRIVE) return exitCar();
-      const c = nearestCar();
-      if (mode === MODE.WALK && c) return enterCar(c);
-      toggleMode();
+    hold($("btn-down"), (v) => tDown = v);           // descend in fly / heli
+    $("btn-fly").addEventListener("click", (e) => {
+      e.preventDefault();
+      if (state === S.PLAYING && (mode === MODE.WALK || mode === MODE.FLY)) toggleMode();
     });
+    $("btn-action").addEventListener("click", (e) => {
+      e.preventDefault();
+      if (state === S.PLAYING) tryEnterExit();        // enter/exit car, bike or heli
+    });
+    updateTouchUI();
+  }
+
+  // Mobile: every action is a button — no keyboard needed. Buttons appear
+  // contextually (Enter when near a vehicle, Exit while in one, Descend while
+  // airborne) and relabel to match the mode.
+  function updateTouchUI() {
+    if (!isTouch()) return;
+    const inVeh = mode === MODE.DRIVE || mode === MODE.HELI;
+    let act = null;
+    if (inVeh) act = "EXIT";
+    else if (mode === MODE.WALK) { const c = nearestCar(); if (c) act = c.type === "bike" ? "RIDE" : c.type === "heli" ? "BOARD" : "DRIVE"; }
+    showBtn($("btn-action"), act);
+    showBtn($("btn-fly"), inVeh ? null : (mode === MODE.FLY ? "LAND" : "FLY"));
+    showBtn($("btn-down"), (mode === MODE.FLY || mode === MODE.HELI) ? "DOWN" : null);
+    const up = $("btn-up"); if (up) up.textContent = mode === MODE.WALK ? "JUMP" : "UP";
+  }
+  function showBtn(el, label) {
+    if (!el) return;
+    if (label) { if (el.textContent !== label) el.textContent = label; el.classList.remove("hidden"); }
+    else el.classList.add("hidden");
   }
 
   // ========================================================================
@@ -939,10 +962,11 @@
     return best;
   }
   function updatePrompt() {
+    if (isTouch()) { if (ui.prompt) ui.prompt.classList.add("hidden"); updateTouchUI(); return; }
     if (!ui.prompt) return;
     const c = nearestCar();
     ui.prompt.classList.toggle("hidden", !c);
-    if (c) ui.prompt.textContent = c.type === "bike" ? "Press E to ride" : "Press E to drive";
+    if (c) ui.prompt.textContent = c.type === "bike" ? "Press E to ride" : c.type === "heli" ? "Press E to board" : "Press E to drive";
   }
   function enterCar(c) {
     drivingCar = c;
@@ -952,6 +976,7 @@
     heroBody.setMotionType(BABYLON.PhysicsMotionType.ANIMATED);
     if (ui.mode) ui.mode.textContent = c.type === "heli" ? "HELICOPTER" : c.type === "bike" ? "RIDING" : "DRIVING";
     if (ui.prompt) ui.prompt.classList.add("hidden");
+    updateTouchUI();
   }
   function exitCar() {
     const node = drivingCar.node;
@@ -964,6 +989,7 @@
     camYaw = carHeading;
     model.setEnabled(true);
     if (ui.mode) ui.mode.textContent = "ON FOOT";
+    updateTouchUI();
   }
 
   function updateWalk(dt, kU, kD, kL, kR) {
@@ -1066,6 +1092,7 @@
     heroBody.setLinearDamping(0);
     if (ui.mode) ui.mode.textContent = mode === MODE.FLY ? "FLYING" : "ON FOOT";
     if (ui.prompt) ui.prompt.classList.add("hidden");
+    updateTouchUI();
     if (instant) updateCamera(0, true);
   }
   function toggleMode() { setMode(mode === MODE.FLY ? MODE.WALK : MODE.FLY); }
