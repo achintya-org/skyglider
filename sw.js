@@ -1,7 +1,7 @@
 // Sky Glider service worker — network-first so updates always win, with a
 // cached app shell for offline play. (Network-first avoids the stale-cache
 // trap where an old worker keeps serving a previous build's game.js.)
-const CACHE = "skyglider-3d-v6";
+const CACHE = "skyglider-3d-v7";
 const ASSETS = [
   "./",
   "./index.html",

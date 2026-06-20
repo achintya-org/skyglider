@@ -51,6 +51,13 @@ Hard rules:
   secret. A new project can be provisioned with `firebase-setup.yml` (edit
   `.github/firebase-trigger.txt`).
 
+## Branding / icons
+- The app icon/favicon must always match the game's current look (dark navy +
+  cyan→violet accent). Source SVGs: `icons/icon.svg` (rounded) and
+  `icons/icon-maskable.svg` (full-bleed). After editing either, regenerate the
+  PNGs with `node scripts/make-icons.mjs`. When the game's visual design
+  changes, update the icon in the same change.
+
 ## Deploy / verify
 - Develop on branch `claude/move-into-org-one-712g89`; pushing deploys to Pages.
 - `node scripts/smoke.mjs` is the headless regression check (also asserts no
