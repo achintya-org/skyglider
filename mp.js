@@ -1,10 +1,12 @@
 /*
- * Sky Glider — online layer (proximity presence + quick chat).
+ * Sky Glider — online layer (main thread). OPT-IN and off by default.
  *
- * Zero bundle cost: NO Firebase SDK is loaded. We talk to the Realtime
- * Database over plain REST (fetch), and only when actually in the world with a
- * config present. Polling is adaptive — slow when you're alone, faster when
- * other players are nearby — so being online stays cheap and on-demand.
+ * Performance contract: while disabled it does literally nothing (the game loop
+ * skips it via MP.enabled === false). When enabled, ALL networking runs in a
+ * Web Worker over a server-push stream (no polling, never on the render thread).
+ * The render thread only nudges avatar transforms, and only when a peer exists —
+ * when you're alone, sync() is a no-op over an empty set. Materials/avatars are
+ * built lazily on the first peer, so being online-but-alone costs ~0.
  *
  * Dormant unless window.FIREBASE_CONFIG has apiKey + databaseURL.
  */
@@ -13,17 +15,17 @@
 
   const cfg = window.FIREBASE_CONFIG || {};
   const BASE = (cfg.databaseURL || "").replace(/\/+$/, "");
-  const enabled = !!(cfg.apiKey && BASE);
+  const available = !!(cfg.apiKey && BASE);
 
   const MP = (window.MP = {
-    enabled, ready: false, chatting: false, uid: null, name: null,
+    available, enabled: false, ready: false, chatting: false, uid: null, name: null,
     players: {}, onChatToggle: null,
-    attach, init, update, sync, openChat, closeChat,
+    attach, setName, connect, disconnect, toggle, update, sync, openChat, closeChat,
   });
 
-  let scene, skinMat, bodyColor;
+  let worker = null, scene = null, skinMat = null, bodyColor = null;
   const avatars = {};
-  let self = null, lastWrite = 0, lastRead = 0, reading = false;
+  let lastPostX = 1e9, lastPostZ = 1e9;
 
   function uidGen() {
     try {
@@ -32,59 +34,54 @@
       return id;
     } catch (e) { return "u" + Math.random().toString(36).slice(2, 12); }
   }
+  function setName(name) { MP.name = (name || "").slice(0, 16) || ("Pilot-" + Math.floor(1000 + Math.random() * 9000)); }
 
-  function init(name) {
-    MP.name = (name || "").slice(0, 16) || ("Pilot-" + Math.floor(1000 + Math.random() * 9000));
-    if (!enabled) return;
+  function toggle(on) { if (on) connect(); else disconnect(); return MP.enabled; }
+
+  function connect() {
+    if (!available || MP.enabled) return;
+    if (!MP.name) setName("");
     MP.uid = uidGen();
-    self = { name: MP.name, t: Date.now() };
-    MP.ready = true;
-    const bye = () => { try { fetch(BASE + "/players/" + MP.uid + ".json", { method: "DELETE", keepalive: true }); } catch (e) {} };
-    window.addEventListener("pagehide", bye);
-    window.addEventListener("beforeunload", bye);
+    worker = new Worker("./mp-worker.js?v=mp3");
+    worker.onmessage = (e) => { if (e.data && e.data.type === "players") MP.players = e.data.players || {}; };
+    worker.postMessage({ type: "start", base: BASE, uid: MP.uid, name: MP.name });
+    lastPostX = lastPostZ = 1e9;
+    MP.enabled = true; MP.ready = true;
+    window.addEventListener("pagehide", onLeave);
   }
+  function disconnect() {
+    if (!MP.enabled) return;
+    try { worker.postMessage({ type: "stop" }); } catch (e) {}
+    const w = worker; setTimeout(() => { try { w.terminate(); } catch (e) {} }, 80);
+    worker = null;
+    MP.enabled = false; MP.ready = false; MP.players = {};
+    for (const k in avatars) { avatars[k].root.dispose(false, true); delete avatars[k]; }
+    window.removeEventListener("pagehide", onLeave);
+  }
+  function onLeave() { try { worker && worker.postMessage({ type: "stop" }); } catch (e) {} }
 
-  // Called by the game each frame; throttles REST writes/reads internally.
+  // Per frame while connected: post our state to the worker only when we've
+  // actually moved (>2 m). The worker throttles the network write + heartbeats.
   function update(state) {
-    if (!MP.ready) return;
-    self.x = state.x; self.y = state.y; self.z = state.z; self.h = state.h; self.mode = state.mode;
-    self.name = MP.name; self.t = Date.now();
-    const now = performance.now();
-    if (now - lastWrite > 1200) { lastWrite = now; writeSelf(); }
-    const others = Object.keys(MP.players).length;
-    if (now - lastRead > (others > 0 ? 1500 : 4000) && !reading) { lastRead = now; readPlayers(); }
+    if (!MP.ready || !worker) return;
+    const dx = state.x - lastPostX, dz = state.z - lastPostZ;
+    if (dx * dx + dz * dz > 4) {
+      lastPostX = state.x; lastPostZ = state.z;
+      worker.postMessage({ type: "state", s: { x: state.x, y: state.y, z: state.z, h: state.h, mode: state.mode, name: MP.name } });
+    }
   }
+  function doSendChat(text) { if (MP.ready && text && worker) worker.postMessage({ type: "chat", text: text }); }
 
-  function writeSelf() {
-    fetch(BASE + "/players/" + MP.uid + ".json?print=silent", { method: "PUT", body: JSON.stringify(self) }).catch(() => {});
-  }
-  function readPlayers() {
-    reading = true;
-    fetch(BASE + "/players.json").then((r) => r.json()).then((val) => {
-      const out = {}, now = Date.now();
-      if (val) for (const k in val) {
-        if (k === MP.uid) continue;
-        const d = val[k];
-        if (d && typeof d.x === "number" && (!d.t || now - d.t < 15000)) out[k] = d;
-      }
-      MP.players = out;
-    }).catch(() => {}).finally(() => { reading = false; });
-  }
-  function doSendChat(text) {
-    if (!MP.ready || !text) return;
-    self.msg = text.slice(0, 140); self.msgAt = Date.now(); self.t = Date.now();
-    writeSelf();
-  }
-
-  // ---- Remote avatars ----------------------------------------------------
-  function attach(s) {
-    scene = s;
+  // ---- Remote avatars (built lazily on first peer) -----------------------
+  function attach(s) { scene = s; }   // store scene only; no allocations yet
+  function ensureMats() {
+    if (skinMat) return;
     skinMat = new BABYLON.StandardMaterial("rSkin", scene);
     skinMat.diffuseColor = new BABYLON.Color3(0.86, 0.66, 0.52);
     bodyColor = new BABYLON.Color3(0.3, 0.6, 0.85);
   }
-
   function makeAvatar() {
+    ensureMats();
     const root = new BABYLON.TransformNode("rp", scene);
     const mat = new BABYLON.StandardMaterial("rBody", scene);
     mat.diffuseColor = bodyColor.clone();
@@ -129,10 +126,11 @@
   function clip(s, n) { return s.length > n ? s.slice(0, n - 1) + "…" : s; }
 
   function sync(dt, localPos) {
-    if (!scene) return;
-    for (const uid in avatars) if (!MP.players[uid]) { avatars[uid].root.dispose(false, true); delete avatars[uid]; }
-    for (const uid in MP.players) {
-      const d = MP.players[uid];
+    if (!scene || !MP.enabled) return;
+    const players = MP.players;
+    for (const uid in avatars) if (!players[uid]) { avatars[uid].root.dispose(false, true); delete avatars[uid]; }
+    for (const uid in players) {
+      const d = players[uid];
       if (typeof d.x !== "number") continue;
       const a = avatars[uid] || (avatars[uid] = makeAvatar());
       const tgt = new BABYLON.Vector3(d.x, typeof d.y === "number" ? d.y : 1, d.z);

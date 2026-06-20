@@ -13,7 +13,7 @@
   <link rel="manifest" href="./manifest.webmanifest" />
   <link rel="icon" type="image/svg+xml" href="./icons/icon.svg" />
   <link rel="apple-touch-icon" href="./icons/icon-192.png" />
-  <link rel="stylesheet" href="./styles.css?v=mp1" />
+  <link rel="stylesheet" href="./styles.css?v=mp3" />
 </head>
 <body>
   <canvas id="renderCanvas" touch-action="none"></canvas>
@@ -60,6 +60,10 @@
       <div class="wordmark">SKY&nbsp;GLIDER</div>
       <p class="sub">Open city · walk or fly anywhere</p>
       <input id="name-input" maxlength="16" autocomplete="off" placeholder="Your name (optional)" />
+      <label id="online-row" class="toggle hidden">
+        <input type="checkbox" id="online-toggle" />
+        <span>Play online — see &amp; chat with nearby pilots</span>
+      </label>
       <button id="play-btn" class="btn">Enter the City</button>
       <div class="help">
         <div><kbd>F</kbd><span>Walk / Fly</span></div>
@@ -92,8 +96,8 @@
        nothing to the initial load. firebase-config.js + mp.js are tiny. -->
   <script src="./vendor/babylon.js?v=mp2"></script>
   <script src="./vendor/HavokPhysics_umd.js?v=mp2"></script>
-  <script src="./firebase-config.js?v=mp2"></script>
-  <script src="./mp.js?v=mp2"></script>
-  <script src="./game.js?v=mp2"></script>
+  <script src="./firebase-config.js?v=mp3"></script>
+  <script src="./mp.js?v=mp3"></script>
+  <script src="./game.js?v=mp3"></script>
 </body>
 </html>

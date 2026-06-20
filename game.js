@@ -51,7 +51,7 @@
   let buildings = [], water, traffic = [], peds = [], birds = [];
   let enterables = [], obstacles = [], drivingCar = null, carHeading = 0, carSpeed = 0, heliVel = null;
   let camYaw = 0, camPitch = 0.25, modelYaw = 0, flyYaw = 0, flyPitch = 0, boostE = 1, animPhase = 0, animT = 0;
-  let grounded = false, pointerLocked = false, lockedOnce = false, mpInited = false;
+  let grounded = false, pointerLocked = false, lockedOnce = false;
   const keys = {};
   // touch
   let tMoveX = 0, tMoveY = 0, tLookX = 0, tLookY = 0, tBoost = false, tUp = false, tDown = false;
@@ -87,7 +87,10 @@
     buildCamera();
     setupInput();
     setMode(MODE.WALK, true);
-    if (window.MP) { MP.attach(scene); MP.onChatToggle = onChatToggle; }
+    if (window.MP) {
+      MP.attach(scene); MP.onChatToggle = onChatToggle;
+      if (MP.available) { const row = document.getElementById("online-row"); if (row) row.classList.remove("hidden"); }
+    }
 
     // read-only snapshot for the headless smoke test
     window.__sg = () => ({
@@ -1040,10 +1043,11 @@
     ui.menu.classList.add("hidden");
     ui.pause.classList.add("hidden");
     ui.hud.classList.remove("hidden");
-    if (window.MP && !mpInited) {
-      mpInited = true;
+    if (window.MP && MP.available) {
       const nameEl = document.getElementById("name-input");
-      MP.init(nameEl ? nameEl.value.trim() : "");
+      MP.setName(nameEl ? nameEl.value.trim() : "");
+      const onl = document.getElementById("online-toggle");
+      if (onl && onl.checked) MP.connect();   // opt-in only
     }
     lockPointer();
   }
@@ -1061,6 +1065,7 @@
   }
   function toMenu() {
     state = S.MENU;
+    if (window.MP && MP.enabled) MP.disconnect();   // stop networking when leaving
     // leave any vehicle and reset to the downtown plaza, on foot
     drivingCar = null; carSpeed = 0;
     model.setEnabled(true);

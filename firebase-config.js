@@ -3,20 +3,16 @@
  *
  * These values are PUBLIC and safe to commit — access is controlled by the
  * Realtime Database security rules (see database.rules.json), not by hiding
- * these keys. Until you fill them in, the game runs in single-player and the
- * multiplayer layer stays completely dormant (no errors, no network).
+ * these keys. Multiplayer is OPT-IN: even with this filled in, the game makes
+ * NO network connection until the player turns on "Play online". When off, the
+ * online layer is completely inert.
  *
- * To enable online play:
- *   1. Create a Firebase project at https://console.firebase.google.com
- *   2. Build → Realtime Database → Create database (any region, locked mode)
- *   3. Authentication → Sign-in method → enable "Anonymous"
- *   4. Project settings → Your apps → add a Web app → copy the config below
- *   5. Paste the values here, commit, and redeploy.
+ * Project auto-provisioned via CI (.github/workflows/firebase-setup.yml).
  */
 window.FIREBASE_CONFIG = {
-  apiKey: "",
-  authDomain: "",
-  databaseURL: "",
-  projectId: "",
-  appId: "",
+  apiKey: "AIzaSyCkyz5Apt3x3aECm7S1v8P1zzSJ4DmjTqI",
+  authDomain: "skyglider-a7ac6001.firebaseapp.com",
+  databaseURL: "https://skyglider-a7ac6001-default-rtdb.firebaseio.com",
+  projectId: "skyglider-a7ac6001",
+  appId: "1:795316120007:web:1a3003b9c0319b1898d1e2",
 };
