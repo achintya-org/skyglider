@@ -201,6 +201,7 @@
     const pMat = new BABYLON.StandardMaterial("pMat", scene);
     pMat.diffuseColor = new BABYLON.Color3(0.2, 0.21, 0.24);
     pMat.specularColor = new BABYLON.Color3(0.02, 0.02, 0.02);
+    pMat.zOffset = -1;   // sit above the ground plane in the depth test (no z-fighting)
     plate.material = pMat; plate.receiveShadows = true; plate.freezeWorldMatrix();
   }
 
@@ -214,8 +215,10 @@
     rc.fillStyle = "#e8c84a"; for (let y = 16; y < 512; y += 64) rc.fillRect(30, y, 4, 34); // centre dashes
     rc.fillStyle = "rgba(230,230,230,0.7)"; rc.fillRect(4, 0, 3, 512); rc.fillRect(57, 0, 3, 512); // edges
     roadTex.update(); roadTex.wrapV = BABYLON.Texture.WRAP_ADDRESSMODE; roadTex.vScale = 40;
+    roadTex.anisotropicFilteringLevel = 8;   // stop the lane markings shimmering at grazing angles
     const roadMat = new BABYLON.StandardMaterial("roadMat", scene);
     roadMat.diffuseTexture = roadTex; roadMat.specularColor = new BABYLON.Color3(0.05, 0.05, 0.05);
+    roadMat.zOffset = -2;   // draw on top of the plate; avoids the lane-line z-fighting flicker
 
     const swMat = new BABYLON.StandardMaterial("swMat", scene);
     swMat.diffuseColor = new BABYLON.Color3(0.45, 0.46, 0.5);
@@ -225,7 +228,7 @@
       const rx = BABYLON.MeshBuilder.CreateGround("rx" + i, { width: SPAN, height: ROAD_W }, scene);
       rx.position.set(0, 0.04, p); rx.material = roadMat; rx.receiveShadows = true; rx.rotation.y = Math.PI / 2;
       const rz = BABYLON.MeshBuilder.CreateGround("rz" + i, { width: SPAN, height: ROAD_W }, scene);
-      rz.position.set(p, 0.05, 0); rz.material = roadMat; rz.receiveShadows = true;
+      rz.position.set(p, 0.08, 0); rz.material = roadMat; rz.receiveShadows = true;
     }
 
     // Window-facade materials (a few shared variants)
