@@ -101,6 +101,7 @@
       px: heroMesh.position.x, pz: heroMesh.position.z,
       cars: enterables.length,
       mats: scene.materials.length, meshes: scene.meshes.length,
+      cols: scene.meshes.reduce((n, m) => n + (m.name === "acol" || m.name === "pcol" ? 1 : 0), 0),
     });
     window.__tp = (x, z) => { heroMesh.position.set(x, heroMesh.position.y, z); maybeManageActors(heroMesh.position); return scene.materials.length; };
     window.__enter = (type) => {
@@ -370,7 +371,11 @@
       traffic.push({ onX, dir, speed: 7 + Math.random() * 7, x, z, rotY, col: CAR_COLORS[i % CAR_COLORS.length], node: null });
     }
   }
-  function spawnTraffic(it) { it.node = makeVehicle("car", it.x, it.z, it.rotY, it.col); }
+  function spawnTraffic(it) {
+    it.node = makeVehicle("car", it.x, it.z, it.rotY, it.col);
+    const c = makeVehicleCollider("car", it.x, it.z, it.rotY); it.collider = c.collider; it.agg = c.agg;
+    syncCollider(it);
+  }
 
   // Enterable, parked vehicles you can drive — a mix of cars and bikes.
   function buildVehicles() {
@@ -390,6 +395,8 @@
   function spawnVehicle(it) {
     it.node = makeVehicle(it.type, it.x, it.z, it.rotY, it.col);
     if (it.node.metadata) { it.rotor = it.node.metadata.rotor; it.tailRotor = it.node.metadata.tailRotor; }
+    const c = makeVehicleCollider(it.type, it.x, it.z, it.rotY); it.collider = c.collider; it.agg = c.agg;
+    syncCollider(it);
   }
 
   // ---- Lazy actor manager: meshes exist only near the player -------------
@@ -414,10 +421,40 @@
     }
   }
   function disposeActor(it) {
-    // Dispose the meshes only — NOT materials/textures. Actor materials are
-    // shared/cached (see cachedMat); destroying them would tear down materials
-    // still used by the world + hero and make the GlowLayer flash. false,false.
+    // Physics colliders exist only while spawned (nearby), so cost stays bounded.
+    if (it.agg) { it.agg.dispose(); it.agg = null; }
+    if (it.collider && it.collider !== it.node) it.collider.dispose();
+    it.collider = null;
+    // Dispose the meshes only — NOT materials/textures (shared/cached; see
+    // cachedMat) — or the world/hero materials and GlowLayer would break.
     it.node.dispose(false, false); it.node = null; it.rotor = null; it.tailRotor = null; it.legL = null; it.legR = null;
+  }
+
+  // ---- Actor physics: nearby actors are SOLID -----------------------------
+  // Vehicles are kinematic (ANIMATED) boxes that shove dynamic pedestrians and
+  // the player; pedestrians are upright dynamic capsules so cars push them and
+  // they bump each other. Bodies exist only while the actor is spawned.
+  function makeVehicleCollider(type, x, z, rotY) {
+    const d = type === "bike" ? [0.7, 1.2, 1.9] : type === "heli" ? [2.4, 2.0, 4.4] : [2.2, 1.5, 4.6];
+    const c = BABYLON.MeshBuilder.CreateBox("acol", { width: d[0], height: d[1], depth: d[2] }, scene);
+    c.position.set(x, d[1] / 2, z); c.rotation.y = rotY; c.isVisible = false; c.isPickable = false;
+    const agg = new BABYLON.PhysicsAggregate(c, BABYLON.PhysicsShapeType.BOX, { mass: 0 }, scene);
+    agg.body.setMotionType(BABYLON.PhysicsMotionType.ANIMATED);
+    return { collider: c, agg };
+  }
+  function makePedCollider(x, z) {
+    const c = BABYLON.MeshBuilder.CreateCapsule("pcol", { radius: 0.3, height: 1.7 }, scene);
+    c.position.set(x, 0.9, z); c.isVisible = false; c.isPickable = false;
+    const agg = new BABYLON.PhysicsAggregate(c, BABYLON.PhysicsShapeType.CAPSULE, { mass: 70, restitution: 0, friction: 0.8 }, scene);
+    agg.body.setAngularDamping(100);
+    agg.body.setLinearDamping(0.4);
+    agg.body.setMassProperties({ inertia: BABYLON.Vector3.Zero() });   // stay upright
+    return { collider: c, agg };
+  }
+  function syncCollider(it) {
+    if (!it.collider) return;
+    it.collider.position.copyFrom(it.node.position);
+    it.collider.rotation.y = it.node.rotation.y;
   }
 
   // ---- Coastline + ocean (north, +Z) ----
@@ -543,30 +580,36 @@
   }
   function spawnPed(it) {
     const skin = scene.getMaterialByName("pedSkin") || mat("pedSkin", new BABYLON.Color3(0.82, 0.62, 0.5));
-    const node = new BABYLON.TransformNode("ped", scene);
-    node.position.set(it.x, 0, it.z);
-    node.rotation.y = it.base + (it.dir > 0 ? 0 : Math.PI);
     const sm = cachedMat("pedShirt_" + it.col.join("_"), it.col, 0.05);
+    const c = makePedCollider(it.x, it.z);
+    it.collider = c.collider; it.agg = c.agg; it.node = c.collider;   // dynamic capsule = physics root
+    const vis = new BABYLON.TransformNode("pvis", scene); vis.parent = c.collider; vis.position.y = -0.9;
+    vis.rotation.y = it.base + (it.dir > 0 ? 0 : Math.PI);
     const torso = BABYLON.MeshBuilder.CreateBox("pt", { width: 0.4, height: 0.7, depth: 0.24 }, scene);
-    torso.material = sm; torso.parent = node; torso.position.y = 1.15; torso.isPickable = false;
+    torso.material = sm; torso.parent = vis; torso.position.y = 1.15; torso.isPickable = false;
     const head = BABYLON.MeshBuilder.CreateSphere("ph", { diameter: 0.3, segments: 6 }, scene);
-    head.material = skin; head.parent = node; head.position.y = 1.62; head.isPickable = false;
+    head.material = skin; head.parent = vis; head.position.y = 1.62; head.isPickable = false;
     const mkLeg = (sx) => {
-      const j = new BABYLON.TransformNode("pl", scene); j.parent = node; j.position.set(sx, 0.8, 0);
+      const j = new BABYLON.TransformNode("pl", scene); j.parent = vis; j.position.set(sx, 0.8, 0);
       const l = BABYLON.MeshBuilder.CreateBox("plm", { width: 0.14, height: 0.7, depth: 0.18 }, scene);
       l.material = sm; l.parent = j; l.position.y = -0.35; l.isPickable = false; return j;
     };
-    it.node = node; it.legL = mkLeg(0.1); it.legR = mkLeg(-0.1);
+    it.vis = vis; it.legL = mkLeg(0.1); it.legR = mkLeg(-0.1);
   }
   function animatePedestrians(dt) {
     for (const p of peds) {
       if (!p.node) continue;                 // despawned → no work
-      const ax = p.onX ? "x" : "z";
-      p[ax] += p.dir * p.speed * dt;
       p.travel += p.speed * dt;
-      if (p.travel > p.range) { p.travel = 0; p.dir *= -1; p.node.rotation.y = p.base + (p.dir > 0 ? 0 : Math.PI); }
+      if (p.travel > p.range) { p.travel = 0; p.dir *= -1; }
+      // walk along the lane via velocity; preserve the perpendicular axis so a
+      // car (or another body) can shove the pedestrian sideways.
+      const v = p.agg.body.getLinearVelocity();
+      const vx = p.onX ? p.dir * p.speed : v.x;
+      const vz = p.onX ? v.z : p.dir * p.speed;
+      p.agg.body.setLinearVelocity(new BABYLON.Vector3(vx, v.y, vz));
+      const cp = p.collider.position; p.x = cp.x; p.z = cp.z;     // descriptor follows physics
+      p.vis.rotation.y = p.base + (p.dir > 0 ? 0 : Math.PI);
       p.phase += dt * 5;
-      p.node.position[ax] = p[ax];
       const sw = Math.sin(p.phase) * 0.5;
       p.legL.rotation.x = sw; p.legR.rotation.x = -sw;
     }
@@ -720,6 +763,7 @@
       t[ax] += t.dir * t.speed * dt;
       if (t[ax] > 640) t[ax] = -640; else if (t[ax] < -640) t[ax] = 640;
       t.node.position[ax] = t[ax];
+      syncCollider(t);                       // kinematic collider follows the car
     }
   }
 
@@ -914,6 +958,7 @@
     if (!blocked(node.position.x, nz)) node.position.z = nz; else carSpeed *= 0.2;
     node.rotation.y = carHeading;
     heroMesh.position.set(node.position.x, node.position.y, node.position.z);
+    syncCollider(drivingCar);                // your car shoves pedestrians as you drive
   }
 
   // ---- Helicopter (vertical-takeoff arcade flight) ----
@@ -937,6 +982,7 @@
     node.rotation.y = carHeading;
     node.rotation.x = clamp(fb * 0.18, -0.25, 0.25);   // nose tilt with travel
     heroMesh.position.set(node.position.x, node.position.y, node.position.z);
+    syncCollider(drivingCar);
   }
 
   // Spin every helicopter's rotors (faster for the one being piloted).

@@ -55,9 +55,10 @@ server.close();
 
 const peak = Math.max(base, ...samples, after.mats);
 const bounded = peak - base <= 40;        // a handful of distinct actor colors, not hundreds
-console.log("base mats:", base, "samples:", JSON.stringify(samples), "final:", after.mats);
-console.log("checks:", JSON.stringify({ bounded, peakDelta: peak - base, noErrors: errors.length === 0 }));
+const colsBounded = after.cols <= 80;     // physics colliders exist only for nearby actors
+console.log("base mats:", base, "samples:", JSON.stringify(samples), "final:", after.mats, "colliders:", after.cols);
+console.log("checks:", JSON.stringify({ bounded, peakDelta: peak - base, colsBounded, noErrors: errors.length === 0 }));
 if (errors.length) console.log("ERRORS:", errors);
 
-if (bounded && errors.length === 0) { console.log("\nLAZY_CHECK_PASS"); process.exit(0); }
+if (bounded && colsBounded && errors.length === 0) { console.log("\nLAZY_CHECK_PASS"); process.exit(0); }
 else { console.log("\nLAZY_CHECK_FAIL"); process.exit(1); }
