@@ -1,20 +1,19 @@
 /*
- * Sky Glider — online multiplayer layer (proximity presence + quick chat).
+ * Sky Glider — online layer (proximity presence + quick chat).
  *
- * Fully dormant unless window.FIREBASE_CONFIG is filled in AND the Firebase
- * compat SDK loaded. Everything is guarded so single-player is never affected.
+ * Zero bundle cost: NO Firebase SDK is loaded. We talk to the Realtime
+ * Database over plain REST (fetch), and only when actually in the world with a
+ * config present. Polling is adaptive — slow when you're alone, faster when
+ * other players are nearby — so being online stays cheap and on-demand.
  *
- * Data model (Realtime Database):
- *   players/{uid} = { x, y, z, h, mode, name, msg, msgAt, t }
- *   - position/heading broadcast ~11Hz; onDisconnect removes the node
- *   - msg/msgAt carry the latest quick chat line (shown as a timed bubble)
+ * Dormant unless window.FIREBASE_CONFIG has apiKey + databaseURL.
  */
 (function () {
   "use strict";
 
   const cfg = window.FIREBASE_CONFIG || {};
-  const hasSDK = typeof window.firebase !== "undefined";
-  const enabled = !!(cfg.apiKey && cfg.databaseURL && hasSDK);
+  const BASE = (cfg.databaseURL || "").replace(/\/+$/, "");
+  const enabled = !!(cfg.apiKey && BASE);
 
   const MP = (window.MP = {
     enabled, ready: false, chatting: false, uid: null, name: null,
@@ -22,50 +21,59 @@
     attach, init, update, sync, openChat, closeChat,
   });
 
-  let scene, skinMat, bodyMatBase;
-  const avatars = {};            // uid -> avatar meshes
-  let db = null, selfRef = null, lastWrite = 0;
+  let scene, skinMat, bodyColor;
+  const avatars = {};
+  let self = null, lastWrite = 0, lastRead = 0, reading = false;
 
-  // ---- Firebase plumbing -------------------------------------------------
-  function init(name) {
-    MP.name = name || ("Pilot-" + Math.floor(1000 + Math.random() * 9000));
-    if (!enabled) return;
+  function uidGen() {
     try {
-      firebase.initializeApp(cfg);
-      db = firebase.database();
-      firebase.auth().signInAnonymously()
-        .then((cred) => {
-          MP.uid = cred.user.uid;
-          selfRef = db.ref("players/" + MP.uid);
-          selfRef.onDisconnect().remove();
-          db.ref("players").on("value", (snap) => {
-            const val = snap.val() || {};
-            const out = {};
-            for (const k in val) if (k !== MP.uid) out[k] = val[k];
-            MP.players = out;
-          });
-          MP.ready = true;
-        })
-        .catch((e) => { console.warn("[MP] auth failed — staying single-player:", e.code || e.message); MP.enabled = false; });
-    } catch (e) {
-      console.warn("[MP] init failed — staying single-player:", e.message);
-      MP.enabled = false;
-    }
+      let id = localStorage.getItem("sg_uid");
+      if (!id) { id = "u" + Math.random().toString(36).slice(2, 10) + Date.now().toString(36).slice(-4); localStorage.setItem("sg_uid", id); }
+      return id;
+    } catch (e) { return "u" + Math.random().toString(36).slice(2, 12); }
   }
 
+  function init(name) {
+    MP.name = (name || "").slice(0, 16) || ("Pilot-" + Math.floor(1000 + Math.random() * 9000));
+    if (!enabled) return;
+    MP.uid = uidGen();
+    self = { name: MP.name, t: Date.now() };
+    MP.ready = true;
+    const bye = () => { try { fetch(BASE + "/players/" + MP.uid + ".json", { method: "DELETE", keepalive: true }); } catch (e) {} };
+    window.addEventListener("pagehide", bye);
+    window.addEventListener("beforeunload", bye);
+  }
+
+  // Called by the game each frame; throttles REST writes/reads internally.
   function update(state) {
     if (!MP.ready) return;
+    self.x = state.x; self.y = state.y; self.z = state.z; self.h = state.h; self.mode = state.mode;
+    self.name = MP.name; self.t = Date.now();
     const now = performance.now();
-    if (now - lastWrite < 90) return;
-    lastWrite = now;
-    state.name = MP.name;
-    state.t = firebase.database.ServerValue.TIMESTAMP;
-    selfRef.update(state).catch(() => {});
+    if (now - lastWrite > 1200) { lastWrite = now; writeSelf(); }
+    const others = Object.keys(MP.players).length;
+    if (now - lastRead > (others > 0 ? 1500 : 4000) && !reading) { lastRead = now; readPlayers(); }
   }
 
+  function writeSelf() {
+    fetch(BASE + "/players/" + MP.uid + ".json?print=silent", { method: "PUT", body: JSON.stringify(self) }).catch(() => {});
+  }
+  function readPlayers() {
+    reading = true;
+    fetch(BASE + "/players.json").then((r) => r.json()).then((val) => {
+      const out = {}, now = Date.now();
+      if (val) for (const k in val) {
+        if (k === MP.uid) continue;
+        const d = val[k];
+        if (d && typeof d.x === "number" && (!d.t || now - d.t < 15000)) out[k] = d;
+      }
+      MP.players = out;
+    }).catch(() => {}).finally(() => { reading = false; });
+  }
   function doSendChat(text) {
     if (!MP.ready || !text) return;
-    selfRef.update({ msg: text.slice(0, 140), msgAt: Date.now() }).catch(() => {});
+    self.msg = text.slice(0, 140); self.msgAt = Date.now(); self.t = Date.now();
+    writeSelf();
   }
 
   // ---- Remote avatars ----------------------------------------------------
@@ -73,24 +81,22 @@
     scene = s;
     skinMat = new BABYLON.StandardMaterial("rSkin", scene);
     skinMat.diffuseColor = new BABYLON.Color3(0.86, 0.66, 0.52);
-    bodyMatBase = new BABYLON.Color3(0.3, 0.6, 0.85);
+    bodyColor = new BABYLON.Color3(0.3, 0.6, 0.85);
   }
 
   function makeAvatar() {
     const root = new BABYLON.TransformNode("rp", scene);
     const mat = new BABYLON.StandardMaterial("rBody", scene);
-    mat.diffuseColor = bodyMatBase.clone();
+    mat.diffuseColor = bodyColor.clone();
     const body = BABYLON.MeshBuilder.CreateCapsule("rb", { radius: 0.38, height: 1.7 }, scene);
     body.material = mat; body.parent = root; body.position.y = 0.9; body.isPickable = false;
     const head = BABYLON.MeshBuilder.CreateSphere("rh", { diameter: 0.34, segments: 6 }, scene);
     head.material = skinMat; head.parent = root; head.position.y = 1.78; head.isPickable = false;
-
     const namePlane = label(root, 256, 64, 3.4, 2.45);
     const bubblePlane = label(root, 512, 140, 6, 3.35);
     bubblePlane.setEnabled(false);
-    return { root, body, namePlane, nameTex: namePlane._tex, bubblePlane, bubbleTex: bubblePlane._tex, lastName: "", lastMsg: "", pos: new BABYLON.Vector3() };
+    return { root, namePlane, nameTex: namePlane._tex, bubblePlane, bubbleTex: bubblePlane._tex, lastName: "", lastMsg: "" };
   }
-
   function label(parent, tw, th, w, y) {
     const tex = new BABYLON.DynamicTexture("lt", { width: tw, height: th }, scene, true);
     tex.hasAlpha = true;
@@ -103,10 +109,8 @@
     plane._tex = tex;
     return plane;
   }
-
   function drawLabel(tex, text, accent) {
-    const w = tex.getSize().width, h = tex.getSize().height;
-    const c = tex.getContext();
+    const w = tex.getSize().width, h = tex.getSize().height, c = tex.getContext();
     c.clearRect(0, 0, w, h);
     c.fillStyle = accent ? "rgba(8,14,26,0.82)" : "rgba(8,14,26,0.6)";
     roundRect(c, 6, 6, w - 12, h - 12, 16); c.fill();
@@ -124,18 +128,15 @@
   }
   function clip(s, n) { return s.length > n ? s.slice(0, n - 1) + "…" : s; }
 
-  // Called each frame from the game with the local player's world position.
   function sync(dt, localPos) {
     if (!scene) return;
-    for (const uid in avatars) {
-      if (!MP.players[uid]) { avatars[uid].root.dispose(false, true); delete avatars[uid]; }
-    }
+    for (const uid in avatars) if (!MP.players[uid]) { avatars[uid].root.dispose(false, true); delete avatars[uid]; }
     for (const uid in MP.players) {
       const d = MP.players[uid];
       if (typeof d.x !== "number") continue;
-      let a = avatars[uid] || (avatars[uid] = makeAvatar());
+      const a = avatars[uid] || (avatars[uid] = makeAvatar());
       const tgt = new BABYLON.Vector3(d.x, typeof d.y === "number" ? d.y : 1, d.z);
-      a.root.position = BABYLON.Vector3.Lerp(a.root.position, tgt, Math.min(1, 10 * dt));
+      a.root.position = BABYLON.Vector3.Lerp(a.root.position, tgt, Math.min(1, 4 * dt));
       a.root.rotation.y = d.h || 0;
       const dist = BABYLON.Vector3.Distance(a.root.position, localPos);
       a.root.setEnabled(dist < 500);
@@ -155,10 +156,7 @@
     if (!MP.enabled || MP.chatting) return;
     const el = document.getElementById("chat-input");
     if (!el) return;
-    MP.chatting = true;
-    el.value = "";
-    el.classList.remove("hidden");
-    el.focus();
+    MP.chatting = true; el.value = ""; el.classList.remove("hidden"); el.focus();
     if (MP.onChatToggle) MP.onChatToggle(true);
   }
   function closeChat() {
@@ -167,7 +165,6 @@
     if (el) { el.classList.add("hidden"); el.blur(); }
     if (MP.onChatToggle) MP.onChatToggle(false);
   }
-
   document.addEventListener("DOMContentLoaded", () => {
     const el = document.getElementById("chat-input");
     if (!el) return;

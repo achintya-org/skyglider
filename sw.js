@@ -1,7 +1,7 @@
 // Sky Glider service worker — network-first so updates always win, with a
 // cached app shell for offline play. (Network-first avoids the stale-cache
 // trap where an old worker keeps serving a previous build's game.js.)
-const CACHE = "skyglider-3d-v4";
+const CACHE = "skyglider-3d-v5";
 const ASSETS = [
   "./",
   "./index.html",
@@ -17,9 +17,6 @@ const ASSETS = [
   "./vendor/babylon.js",
   "./vendor/HavokPhysics_umd.js",
   "./vendor/HavokPhysics.wasm",
-  "./vendor/firebase-app-compat.js",
-  "./vendor/firebase-auth-compat.js",
-  "./vendor/firebase-database-compat.js",
 ];
 
 self.addEventListener("install", (event) => {
