@@ -1,0 +1,41 @@
+name: Deploy Firebase DB rules
+
+# Deploys database.rules.json to your Realtime Database using the org secret
+# FIREBASE_TOKEN (GitHub secret names are case-insensitive, so "firebase_token"
+# works). It is a no-op until you set a real projectId in firebase-config.js,
+# so it won't fail before the project exists.
+
+on:
+  push:
+    branches: ["claude/move-into-org-one-712g89", "main"]
+    paths:
+      - "database.rules.json"
+      - "firebase.json"
+      - "firebase-config.js"
+      - ".github/workflows/firebase-rules.yml"
+  workflow_dispatch:
+
+jobs:
+  deploy-rules:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "20"
+
+      - name: Resolve projectId from firebase-config.js
+        id: cfg
+        run: |
+          PID=$(node -e "const s=require('fs').readFileSync('firebase-config.js','utf8');const m=s.match(/projectId:\s*[\"']([^\"']+)[\"']/);process.stdout.write(m && m[1] ? m[1] : '')")
+          echo "pid=$PID" >> "$GITHUB_OUTPUT"
+          if [ -z "$PID" ]; then echo "::notice::No projectId in firebase-config.js yet — skipping rules deploy."; fi
+
+      - name: Install Firebase CLI
+        if: steps.cfg.outputs.pid != ''
+        run: npm i -g firebase-tools
+
+      - name: Deploy database rules
+        if: steps.cfg.outputs.pid != ''
+        run: firebase deploy --only database --project "${{ steps.cfg.outputs.pid }}" --token "${{ secrets.FIREBASE_TOKEN }}" --non-interactive

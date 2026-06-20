@@ -219,6 +219,34 @@ kbd {
   backdrop-filter: blur(6px); -webkit-backdrop-filter: blur(6px);
 }
 
+#name-input {
+  width: 100%;
+  padding: 12px 16px;
+  font-family: var(--font); font-size: 16px; color: var(--ink);
+  background: rgba(255, 255, 255, 0.06);
+  border: 1px solid var(--glass-brd);
+  border-radius: 12px;
+  text-align: center;
+}
+#name-input::placeholder { color: var(--muted); }
+#name-input:focus { outline: none; border-color: var(--accent); }
+
+#chat-input {
+  position: fixed; left: 50%; bottom: 80px;
+  transform: translateX(-50%);
+  z-index: 25;
+  width: min(560px, 88vw);
+  padding: 14px 18px;
+  font-family: var(--font); font-size: 16px; color: var(--ink);
+  background: var(--glass);
+  border: 1px solid var(--accent);
+  border-radius: 14px;
+  box-shadow: var(--shadow);
+  backdrop-filter: blur(10px); -webkit-backdrop-filter: blur(10px);
+}
+#chat-input::placeholder { color: var(--muted); }
+#chat-input:focus { outline: none; }
+
 #err {
   position: fixed; left: 50%; bottom: 18px; transform: translateX(-50%);
   z-index: 30; max-width: 90vw;

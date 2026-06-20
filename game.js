@@ -51,7 +51,7 @@
   let buildings = [], water, traffic = [], peds = [], birds = [];
   let enterables = [], obstacles = [], drivingCar = null, carHeading = 0, carSpeed = 0, heliVel = null;
   let camYaw = 0, camPitch = 0.25, modelYaw = 0, flyYaw = 0, flyPitch = 0, boostE = 1, animPhase = 0, animT = 0;
-  let grounded = false, pointerLocked = false, lockedOnce = false;
+  let grounded = false, pointerLocked = false, lockedOnce = false, mpInited = false;
   const keys = {};
   // touch
   let tMoveX = 0, tMoveY = 0, tLookX = 0, tLookY = 0, tBoost = false, tUp = false, tDown = false;
@@ -87,6 +87,7 @@
     buildCamera();
     setupInput();
     setMode(MODE.WALK, true);
+    if (window.MP) { MP.attach(scene); MP.onChatToggle = onChatToggle; }
 
     // read-only snapshot for the headless smoke test
     window.__sg = () => ({
@@ -659,11 +660,13 @@
   function setupInput() {
     const navKeys = ["Space", "ArrowUp", "ArrowDown", "ArrowLeft", "ArrowRight"];
     const onKey = (e, down) => {
+      if (window.MP && MP.chatting) return;       // ignore game keys while typing
       keys[e.code] = down;
       if (navKeys.includes(e.code)) e.preventDefault();
       if (!down || state !== S.PLAYING) return;
       if (e.code === "KeyE") tryEnterExit();
       else if (e.code === "KeyF" && mode !== MODE.DRIVE) toggleMode();
+      else if ((e.code === "Enter" || e.code === "KeyT") && window.MP && MP.enabled) MP.openChat();
     };
     window.addEventListener("keydown", (e) => onKey(e, true));
     window.addEventListener("keyup", (e) => onKey(e, false));
@@ -676,7 +679,7 @@
       const locked = document.pointerLockElement === canvas;
       pointerLocked = locked;
       if (locked) lockedOnce = true;
-      else if (lockedOnce && state === S.PLAYING && !isTouch()) { lockedOnce = false; pauseGame(); }
+      else if (lockedOnce && state === S.PLAYING && !isTouch() && !(window.MP && MP.chatting)) { lockedOnce = false; pauseGame(); }
     });
     window.addEventListener("mousemove", (e) => {
       if (state !== S.PLAYING || !pointerLocked) return;
@@ -758,6 +761,21 @@
 
     updateCamera(dt);
     updateHUD();
+
+    // Online: broadcast our state and render nearby players.
+    if (window.MP && MP.enabled) {
+      if (MP.ready) {
+        const p = heroMesh.position;
+        const h = mode === MODE.FLY ? flyYaw : (mode === MODE.DRIVE || mode === MODE.HELI) ? carHeading : modelYaw;
+        MP.update({ x: p.x, y: p.y, z: p.z, h, mode });
+      }
+      MP.sync(dt, heroMesh.getAbsolutePosition());
+    }
+  }
+
+  function onChatToggle(open) {
+    if (open) { if (document.pointerLockElement) document.exitPointerLock(); }
+    else if (state === S.PLAYING) lockPointer();
   }
 
   // ---- Driving (arcade) ----
@@ -987,6 +1005,11 @@
     ui.menu.classList.add("hidden");
     ui.pause.classList.add("hidden");
     ui.hud.classList.remove("hidden");
+    if (window.MP && !mpInited) {
+      mpInited = true;
+      const nameEl = document.getElementById("name-input");
+      MP.init(nameEl ? nameEl.value.trim() : "");
+    }
     lockPointer();
   }
   function pauseGame() {

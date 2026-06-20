@@ -13,7 +13,7 @@
   <link rel="manifest" href="./manifest.webmanifest" />
   <link rel="icon" type="image/svg+xml" href="./icons/icon.svg" />
   <link rel="apple-touch-icon" href="./icons/icon-192.png" />
-  <link rel="stylesheet" href="./styles.css?v=ff1" />
+  <link rel="stylesheet" href="./styles.css?v=mp1" />
 </head>
 <body>
   <canvas id="renderCanvas" touch-action="none"></canvas>
@@ -59,6 +59,7 @@
     <div class="panel">
       <div class="wordmark">SKY&nbsp;GLIDER</div>
       <p class="sub">Open city · walk or fly anywhere</p>
+      <input id="name-input" maxlength="16" autocomplete="off" placeholder="Your name (optional)" />
       <button id="play-btn" class="btn">Enter the City</button>
       <div class="help">
         <div><kbd>F</kbd><span>Walk / Fly</span></div>
@@ -67,6 +68,7 @@
         <div><kbd>WASD</kbd><kbd>↑↓←→</kbd><span>Move &amp; steer flight</span></div>
         <div><kbd>Shift</kbd><span>Sprint / Boost</span></div>
         <div><kbd>Space</kbd><span>Jump / Boost</span></div>
+        <div><kbd>Enter</kbd><span>Chat (when online)</span></div>
         <div><kbd>Esc</kbd><span>Pause</span></div>
       </div>
     </div>
@@ -83,8 +85,16 @@
 
   <p id="err" class="hidden"></p>
 
-  <script src="./vendor/babylon.js?v=ff1"></script>
-  <script src="./vendor/HavokPhysics_umd.js?v=ff1"></script>
-  <script src="./game.js?v=ff1"></script>
+  <input id="chat-input" class="hidden" maxlength="140" autocomplete="off" autocapitalize="off"
+         placeholder="Say something…  (Enter to send · Esc to cancel)" />
+
+  <script src="./vendor/babylon.js?v=mp1"></script>
+  <script src="./vendor/HavokPhysics_umd.js?v=mp1"></script>
+  <script src="./vendor/firebase-app-compat.js?v=mp1"></script>
+  <script src="./vendor/firebase-auth-compat.js?v=mp1"></script>
+  <script src="./vendor/firebase-database-compat.js?v=mp1"></script>
+  <script src="./firebase-config.js?v=mp1"></script>
+  <script src="./mp.js?v=mp1"></script>
+  <script src="./game.js?v=mp1"></script>
 </body>
 </html>
