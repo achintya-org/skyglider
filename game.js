@@ -38,9 +38,6 @@
   // along it with momentum. Hold Up to keep pitching up and climb, etc.
   const FLY_CRUISE = 22, FLY_MAX_BOOST = 62, FLY_RESPONSE = 2.4, STEER_RATE = 1.7;
   const MOUSE_SENS = 0.0024;
-  // Flood — the risen sea that drowns the war-torn city. Surges up ONCE when the
-  // game opens, then settles and does no further per-frame work.
-  const FLOOD_HIDDEN = -4, FLOOD_LEVEL = 1.7, FLOOD_RISE = 0.9;   // metres, metres/sec
   // Heavy weapon — the player shoulders a sophisticated rocket launcher and can
   // blow anyone away. Rockets fly out and detonate with an area blast.
   const GUN_RANGE = 700, FIRE_CD = 0.7, GUN_AIM = -1.42;   // metres, seconds between launches, shoulder pose
@@ -55,7 +52,7 @@
   let mode = MODE.WALK;
 
   let engine, scene, heroMesh, heroBody, model, joints = {}, cam, shadowGen;
-  let buildings = [], water, flood = null, traffic = [], peds = [], birds = [], ghosts = [], giants = [], rhinos = [], dinos = [];
+  let buildings = [], water, traffic = [], peds = [], birds = [], ghosts = [], giants = [], rhinos = [], dinos = [];
   let enterables = [], obstacles = [], drivingCar = null, carHeading = 0, carSpeed = 0, heliVel = null;
   let camYaw = 0, camPitch = 0.25, modelYaw = 0, flyYaw = 0, flyPitch = 0, boostE = 1, animPhase = 0, animT = 0;
   let grounded = false, pointerLocked = false, lockedOnce = false;
@@ -217,7 +214,6 @@
     buildGiants();
     buildRhinos();
     buildDinos();
-    buildFlood();
     setWarAtmosphere();
   }
 
@@ -246,36 +242,6 @@
     }
     const cloud = scene.getMaterialByName("cloudMat");
     if (cloud) { cloud.diffuseColor = new BABYLON.Color3(0.22, 0.17, 0.16); cloud.emissiveColor = new BABYLON.Color3(0.13, 0.07, 0.05); cloud.alpha = 0.62; }
-  }
-
-  // ---- Flood: the sea has risen and drowned the city ----------------------
-  // Built dormant below the streets. It surges up ONCE when the game opens
-  // (startFlood), lerps to its final level, then settles — after that the only
-  // per-frame cost is one shared ripple scroll (the ocean already pays it).
-  function buildFlood() {
-    const f = BABYLON.MeshBuilder.CreateGround("flood", { width: 5200, height: 3400 }, scene);
-    f.position.set(0, FLOOD_HIDDEN, -760);           // covers countryside + city + village, up to the coast
-    const m = new BABYLON.StandardMaterial("floodMat", scene);
-    m.diffuseColor = new BABYLON.Color3(0.05, 0.10, 0.15);   // cold, deep floodwater
-    m.specularColor = new BABYLON.Color3(0.7, 0.72, 0.78);   // catches the burning-sky glints
-    m.specularPower = 96;
-    m.emissiveColor = new BABYLON.Color3(0.03, 0.06, 0.09);  // faint cold glow so it never reads as mud
-    m.alpha = 0.8;                                            // drowned streets & cars show through
-    const wm = scene.getMaterialByName("waterMat");
-    if (wm && wm.bumpTexture) m.bumpTexture = wm.bumpTexture;   // share the ocean's ripple — no extra texture/scroll
-    f.material = m; f.isPickable = false; f.setEnabled(false);
-    flood = { node: f, level: FLOOD_HIDDEN, rising: false };
-  }
-  function startFlood() {
-    if (!flood || flood.rising || flood.level >= FLOOD_LEVEL) return;
-    flood.node.setEnabled(true);
-    flood.rising = true;
-  }
-  function updateFlood(dt) {
-    if (!flood || !flood.rising) return;             // ~0 cost once the water has settled
-    flood.level = Math.min(FLOOD_LEVEL, flood.level + FLOOD_RISE * dt);
-    flood.node.position.y = flood.level;
-    if (flood.level >= FLOOD_LEVEL) flood.rising = false;
   }
 
   // ---- A building on fire near the spawn (flames + smoke) -----------------
@@ -1900,7 +1866,6 @@
     if (!heroBody) return;
     animT += dt;
     scrollWater(dt);
-    updateFlood(dt);
     animateTraffic(dt);
     animateVehicles(dt);
     animatePedestrians(dt);
@@ -2201,7 +2166,6 @@
       reflectOnline();
     }
     maybeManageActors(heroMesh.position);   // ensure nearby actors exist before first input
-    startFlood();                           // the sea surges up over the city the moment you open in
     startAudio();                           // horror score: synth bed in-gesture (iOS-safe) + real-track upgrade
     lockPointer();
   }
