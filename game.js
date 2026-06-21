@@ -286,6 +286,21 @@
         x: b.position.x, z: b.position.z, node: null, stuck: false,
       });
     }
+    // Also some ghosts roaming the streets right around the spawn plaza, so they
+    // are visible (and meet-able on foot) the moment the game opens.
+    for (let i = 0; i < 12; i++) {
+      const ang = Math.random() * 6.28, rad = 16 + Math.random() * 78, type = i % 3;
+      const cx = Math.cos(ang) * rad, cz = Math.sin(ang) * rad;
+      ghosts.push({
+        type, baseScale: type === 2 ? 1.35 : 0.95 + Math.random() * 0.2,
+        ax: cx, az: cz, radius: 5 + Math.random() * 14,
+        angle: Math.random() * 6.28, angVel: (Math.random() < 0.5 ? -1 : 1) * (0.12 + Math.random() * 0.3),
+        bob: Math.random() * 6, bobSp: 1.1 + Math.random() * 1.0,
+        creep: Math.random() * 6, creepSp: 0.15 + Math.random() * 0.25,
+        baseY: 1.5 + Math.random() * 6, creepAmp: 1.5 + Math.random() * 3,
+        x: cx, z: cz, node: null, stuck: false,
+      });
+    }
   }
   function ghostMats() {
     const C = (r, g, b) => new BABYLON.Color3(r, g, b);
@@ -388,11 +403,16 @@
   let ambient = null, musicEl = null, muted = false;
   const MUSIC_VOL = 0.55;
 
+  // Called from the play gesture: start the synth bed immediately (so audio is
+  // guaranteed, incl. iOS where the AudioContext must start inside a gesture),
+  // then try to upgrade to a real track.
+  function startAudio() { startAmbient(); startMusic(); }
+
   function startMusic() {
     const local = /^(127\.|localhost$|0\.0\.0\.0|\[?::1)/.test(location.hostname);
     // Real CC0 (public-domain) horror tracks from FreePD, tried in the browser;
-    // first that loads wins. A user-supplied file/URL beats all; the in-engine
-    // synth bed is the final fallback. External URLs skipped on localhost (tests).
+    // first that loads fades out the synth. A user file/URL beats all. External
+    // URLs are skipped on localhost (tests); the synth bed always plays meanwhile.
     const urls = window.HORROR_MUSIC_URL ? [window.HORROR_MUSIC_URL]
       : ["audio/horror.mp3"].concat(local ? [] : [
         "https://freepd.com/music/Ghost%20Processional.mp3",
@@ -404,12 +424,16 @@
     let i = 0;
     const tryNext = () => {
       if (musicEl) return;
-      if (i >= urls.length) { startAmbient(); return; }   // nothing loaded → synth bed
+      if (i >= urls.length) return;   // none loaded → keep the synth bed playing
       const a = new Audio(), url = urls[i++];
       a.loop = true; a.preload = "auto"; a.volume = muted ? 0 : MUSIC_VOL;
       let done = false;
       const fail = () => { if (done) return; done = true; tryNext(); };
-      a.addEventListener("canplaythrough", () => { if (done || musicEl) return; done = true; musicEl = a; a.play().catch(() => startAmbient()); }, { once: true });
+      a.addEventListener("canplaythrough", () => {
+        if (done || musicEl) return; done = true; musicEl = a;
+        a.play().then(() => { if (ambient) { try { ambient.master.gain.linearRampToValueAtTime(0, ambient.ctx.currentTime + 2); } catch (e) {} } })
+          .catch(() => { musicEl = null; });   // blocked → keep the synth bed
+      }, { once: true });
       a.addEventListener("error", fail, { once: true });
       setTimeout(fail, 6000);
       try { a.src = url; a.load(); } catch (e) { fail(); }
@@ -429,7 +453,7 @@
       if (!Ctx) return;
       const ctx = new Ctx();
       const master = ctx.createGain(); master.gain.value = 0; master.connect(ctx.destination);
-      master.gain.linearRampToValueAtTime(muted ? 0 : 0.2, ctx.currentTime + 5);
+      master.gain.linearRampToValueAtTime(muted ? 0 : 0.2, ctx.currentTime + 2);
       const conv = ctx.createConvolver(); conv.buffer = makeReverbIR(ctx, 3.5, 2.2);
       const wet = ctx.createGain(); wet.gain.value = 0.5; conv.connect(wet); wet.connect(master);
       const bus = ctx.createGain(); bus.connect(master); bus.connect(conv);   // dry + reverb send
@@ -1477,7 +1501,7 @@
       reflectOnline();
     }
     maybeManageActors(heroMesh.position);   // ensure nearby actors exist before first input
-    startMusic();                           // horror score (real track if present, else cinematic synth)
+    startAudio();                           // horror score: synth bed in-gesture (iOS-safe) + real-track upgrade
     lockPointer();
   }
   function pauseGame() {
