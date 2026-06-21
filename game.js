@@ -48,7 +48,7 @@
   let mode = MODE.WALK;
 
   let engine, scene, heroMesh, heroBody, model, joints = {}, cam, shadowGen;
-  let buildings = [], water, traffic = [], peds = [], birds = [], ghosts = [], giants = [];
+  let buildings = [], water, traffic = [], peds = [], birds = [], ghosts = [], giants = [], rhinos = [], dinos = [];
   let enterables = [], obstacles = [], drivingCar = null, carHeading = 0, carSpeed = 0, heliVel = null;
   let camYaw = 0, camPitch = 0.25, modelYaw = 0, flyYaw = 0, flyPitch = 0, boostE = 1, animPhase = 0, animT = 0;
   let grounded = false, pointerLocked = false, lockedOnce = false;
@@ -188,6 +188,8 @@
     igniteNearestBuilding();
     buildGhosts();
     buildGiants();
+    buildRhinos();
+    buildDinos();
   }
 
   // ---- A building on fire near the spawn (flames + smoke) -----------------
@@ -520,6 +522,216 @@
     }
   }
 
+  // ---- Fire breath: a jet that exists only while a beast is spawned -------
+  // Shared soft texture; the ParticleSystem is created on spawn and disposed
+  // on despawn (in disposeActor), so distant beasts cost nothing. Emission is
+  // bursty (breathe → rest) and the jet aims along the beast's heading.
+  let fireTex = null;
+  function makeBreathFire(emitter, size) {
+    if (!fireTex) fireTex = makeSoftTexture();
+    const ps = new BABYLON.ParticleSystem("breath", 160, scene);
+    ps.particleTexture = fireTex;
+    ps.emitter = emitter;                       // follows the mouth mesh's world matrix
+    ps.minEmitBox = new BABYLON.Vector3(-0.08, -0.08, 0); ps.maxEmitBox = new BABYLON.Vector3(0.08, 0.08, 0.2);
+    ps.color1 = new BABYLON.Color4(1, 0.62, 0.14, 1); ps.color2 = new BABYLON.Color4(1, 0.24, 0, 1);
+    ps.colorDead = new BABYLON.Color4(0.22, 0.03, 0, 0);
+    ps.minSize = size * 0.6; ps.maxSize = size * 2.0;
+    ps.minLifeTime = 0.28; ps.maxLifeTime = 0.7;
+    ps.emitRate = 130;
+    ps.blendMode = BABYLON.ParticleSystem.BLENDMODE_ONEONE;
+    ps.gravity = new BABYLON.Vector3(0, 2.5, 0);
+    ps.direction1 = new BABYLON.Vector3(0, 0, 1); ps.direction2 = new BABYLON.Vector3(0, 0, 1);   // re-aimed per frame
+    ps.minEmitPower = 7 * size; ps.maxEmitPower = 14 * size; ps.updateSpeed = 0.02;
+    return ps;
+  }
+  // Drive the breathe→rest cycle and aim the jet along the heading. Cheap and
+  // only runs for spawned beasts.
+  function breathe(b, dt, size) {
+    b.breathT -= dt;
+    if (b.breathT <= 0) {
+      b.breathing = !b.breathing;
+      b.breathT = b.breathing ? 1.0 + Math.random() * 0.8 : 2.5 + Math.random() * 3;
+      if (b.breathing) b.fire.start(); else b.fire.stop();
+    }
+    if (b.breathing) {
+      const fx = Math.sin(b.heading), fz = Math.cos(b.heading);
+      b.fire.direction1.set(fx - 0.25, 0.05, fz - 0.25);
+      b.fire.direction2.set(fx + 0.25, 0.45, fz + 0.25);
+    }
+  }
+
+  // ---- Rhinos: armoured beasts that charge and snort fire ----------------
+  // Bulky merged hide + plates + horns, four animated legs, a fire jet from the
+  // snout. Lazy: meshes + jet exist only within range of the player.
+  function rhinoMats() {
+    const C = (r, g, b) => new BABYLON.Color3(r, g, b);
+    const mk = (n, diff, em, sp) => { let x = scene.getMaterialByName(n); if (!x) { x = new BABYLON.StandardMaterial(n, scene); x.diffuseColor = diff; x.emissiveColor = em || C(0, 0, 0); x.specularColor = sp || C(0.04, 0.04, 0.04); } return x; };
+    return {
+      hide: mk("rhHide", C(0.27, 0.26, 0.28), C(0.02, 0.02, 0.025)),
+      plate: mk("rhPlate", C(0.17, 0.16, 0.18), C(0.014, 0.014, 0.02)),
+      horn: mk("rhHorn", C(0.64, 0.62, 0.55), C(0.05, 0.05, 0.045)),
+      eye: mk("rhEye", C(0.3, 0, 0), C(1, 0.2, 0.1)),
+    };
+  }
+  function makeRhino() {
+    const M = rhinoMats(), MB = BABYLON.MeshBuilder, H = M.hide;
+    const root = new BABYLON.TransformNode("rhino", scene);
+    const merge = (build) => { const tmp = new BABYLON.TransformNode("rtmp", scene), parts = []; build(tmp, parts); tmp.computeWorldMatrix(true); const m = BABYLON.Mesh.MergeMeshes(parts, true, true, undefined, false, true); tmp.dispose(); m.isPickable = false; return m; };
+    const body = merge((tmp, parts) => {
+      const box = (w, h, d, m, x, y, z, rx) => { const e = MB.CreateBox("rh", { width: w, height: h, depth: d }, scene); e.material = m; e.parent = tmp; e.position.set(x, y, z); if (rx) e.rotation.x = rx; parts.push(e); return e; };
+      const sph = (dia, m, x, y, z, sx, sy, sz) => { const e = MB.CreateSphere("rh", { diameter: dia, segments: 9 }, scene); e.material = m; e.parent = tmp; e.position.set(x, y, z); if (sx) e.scaling.set(sx, sy, sz); parts.push(e); return e; };
+      const cone = (dt, db, h, m, x, y, z, rx) => { const e = MB.CreateCylinder("rh", { diameterTop: dt, diameterBottom: db, height: h, tessellation: 10 }, scene); e.material = m; e.parent = tmp; e.position.set(x, y, z); e.rotation.x = rx; parts.push(e); return e; };
+      sph(1.9, H, 0, 1.15, -0.1, 1.0, 1.0, 1.5);                            // barrel torso (long in z)
+      sph(1.5, H, 0, 1.2, 1.1, 1.0, 0.95, 1.0);                            // shoulders
+      box(1.5, 0.5, 1.3, M.plate, 0, 1.95, 0.2);                           // armoured back plate
+      box(1.2, 0.4, 1.0, M.plate, 0, 1.9, 1.2);
+      sph(1.0, H, 0, 1.0, 2.0, 1.0, 0.9, 1.1);                             // head base
+      box(0.7, 0.55, 0.9, H, 0, 0.85, 2.7);                                // snout
+      cone(0.02, 0.34, 1.0, M.horn, 0, 1.35, 3.1, 1.05);                   // big front horn
+      cone(0.02, 0.2, 0.5, M.horn, 0, 1.55, 2.5, 0.9);                     // small rear horn
+      for (const s of [-1, 1]) cone(0.02, 0.22, 0.34, H, s * 0.34, 1.7, 1.85, -0.3 + s * 0.0);  // ears
+      for (const s of [-1, 1]) sph(0.16, M.eye, s * 0.36, 1.2, 2.45);      // glowing eyes
+      box(0.5, 0.35, 0.6, H, 0, 1.3, -1.7);                                // rump
+      cone(0.02, 0.14, 0.7, H, 0, 1.5, -2.0, -2.1);                        // tail
+    });
+    body.parent = root;
+    const leg = (x, z) => {
+      const lt = new BABYLON.TransformNode("rleg", scene); lt.parent = root; lt.position.set(x, 1.0, z);
+      const m = merge((tmp, parts) => {
+        const c = MB.CreateCapsule("rl", { radius: 0.27, height: 1.1 }, scene); c.material = H; c.parent = tmp; c.position.set(0, -0.5, 0); parts.push(c);
+        const f = MB.CreateCylinder("rl", { diameter: 0.5, height: 0.22, tessellation: 8 }, scene); f.material = M.plate; f.parent = tmp; f.position.set(0, -1.05, 0); parts.push(f);
+      });
+      m.parent = lt; return lt;
+    };
+    const legs = [leg(-0.62, 1.15), leg(0.62, 1.15), leg(-0.6, -1.05), leg(0.6, -1.05)];
+    const mouth = MB.CreateBox("rMouth", { size: 0.06 }, scene); mouth.parent = root; mouth.position.set(0, 0.95, 3.2); mouth.isVisible = false;
+    const fire = makeBreathFire(mouth, 0.7);
+    return { root, legs, mouth, fire };
+  }
+  function buildRhinos() {
+    for (let i = 0; i < 7; i++) {
+      const ang = Math.random() * 6.28, rad = 90 + Math.random() * 620, scale = 1.6 + Math.random() * 1.4;
+      rhinos.push({
+        scale, x: Math.cos(ang) * rad, z: Math.sin(ang) * rad,
+        heading: Math.random() * 6.28, turn: (Math.random() - 0.5) * 0.5,
+        speed: 5 + Math.random() * 6, walk: Math.random() * 6, walkSp: 5 + Math.random() * 2,
+        breathT: 1 + Math.random() * 4, breathing: false,
+        node: null, legs: null, mouth: null, fire: null,
+      });
+    }
+  }
+  function spawnRhino(it) {
+    const r = makeRhino();
+    it.node = r.root; it.legs = r.legs; it.mouth = r.mouth; it.fire = r.fire;
+    r.root.scaling.setAll(it.scale);
+    r.root.position.set(it.x, 0.18 * it.scale, it.z);
+  }
+  function animateRhinos(dt) {
+    for (const r of rhinos) {
+      if (!r.node) continue;
+      r.heading += r.turn * dt;
+      r.x += Math.sin(r.heading) * r.speed * dt; r.z += Math.cos(r.heading) * r.speed * dt;
+      if (r.x * r.x + r.z * r.z > 920 * 920) { r.heading = Math.atan2(-r.x, -r.z); r.turn = (Math.random() - 0.5) * 0.5; }
+      r.walk += r.walkSp * dt;
+      const sw = Math.sin(r.walk) * 0.6;
+      r.legs[0].rotation.x = sw; r.legs[3].rotation.x = sw;           // diagonal gait
+      r.legs[1].rotation.x = -sw; r.legs[2].rotation.x = -sw;
+      r.node.position.set(r.x, 0.18 * r.scale + Math.abs(Math.sin(r.walk)) * 0.05 * r.scale, r.z);
+      r.node.rotation.y = r.heading;
+      breathe(r, dt, r.scale);
+    }
+  }
+
+  // ---- Dinosaurs: fire-breathing T-rex roaming the outskirts -------------
+  // Merged body + head with jaws/teeth + tapering tail + tiny arms, two big
+  // animated legs, and a fire jet from the maw. Big view range so they loom
+  // over the skyline; meshes + jet exist only when near the player.
+  function dinoMats() {
+    const C = (r, g, b) => new BABYLON.Color3(r, g, b);
+    const mk = (n, diff, em, sp) => { let x = scene.getMaterialByName(n); if (!x) { x = new BABYLON.StandardMaterial(n, scene); x.diffuseColor = diff; x.emissiveColor = em || C(0, 0, 0); x.specularColor = sp || C(0.05, 0.05, 0.05); } return x; };
+    return {
+      hide: mk("dnHide", C(0.16, 0.2, 0.15), C(0.018, 0.024, 0.016)),
+      belly: mk("dnBelly", C(0.28, 0.27, 0.2), C(0.03, 0.029, 0.022)),
+      teeth: mk("dnTeeth", C(0.6, 0.58, 0.5), C(0.08, 0.078, 0.066)),
+      eye: mk("dnEye", C(0.35, 0.25, 0), C(1, 0.7, 0.05)),
+      claw: mk("dnClaw", C(0.08, 0.08, 0.07), C(0.01, 0.01, 0.01)),
+    };
+  }
+  function makeDino() {
+    const M = dinoMats(), MB = BABYLON.MeshBuilder, H = M.hide;
+    const root = new BABYLON.TransformNode("dino", scene);
+    const merge = (build) => { const tmp = new BABYLON.TransformNode("dtmp", scene), parts = []; build(tmp, parts); tmp.computeWorldMatrix(true); const m = BABYLON.Mesh.MergeMeshes(parts, true, true, undefined, false, true); tmp.dispose(); m.isPickable = false; return m; };
+    const body = merge((tmp, parts) => {
+      const box = (w, h, d, m, x, y, z, rx) => { const e = MB.CreateBox("dn", { width: w, height: h, depth: d }, scene); e.material = m; e.parent = tmp; e.position.set(x, y, z); if (rx) e.rotation.x = rx; parts.push(e); return e; };
+      const sph = (dia, m, x, y, z, sx, sy, sz) => { const e = MB.CreateSphere("dn", { diameter: dia, segments: 9 }, scene); e.material = m; e.parent = tmp; e.position.set(x, y, z); if (sx) e.scaling.set(sx, sy, sz); parts.push(e); return e; };
+      const cap = (r, h, m, x, y, z, rx) => { const e = MB.CreateCapsule("dn", { radius: r, height: h }, scene); e.material = m; e.parent = tmp; e.position.set(x, y, z); if (rx) e.rotation.x = rx; parts.push(e); return e; };
+      const cone = (db, h, m, x, y, z, rx) => { const e = MB.CreateCylinder("dn", { diameterTop: 0.02, diameterBottom: db, height: h, tessellation: 8 }, scene); e.material = m; e.parent = tmp; e.position.set(x, y, z); e.rotation.x = rx; parts.push(e); return e; };
+      sph(1.7, H, 0, 3.0, 0, 1.0, 1.05, 1.6);                              // torso
+      sph(1.0, M.belly, 0, 2.7, 0.2, 0.9, 0.85, 1.2);                      // belly
+      // neck up to the head
+      cap(0.45, 1.1, H, 0, 3.9, 1.0, 0.6);
+      const hx = 0, hy = 4.5, hz = 1.9;
+      sph(0.95, H, hx, hy, hz, 1.0, 0.95, 1.25);                           // skull
+      box(0.7, 0.42, 1.2, H, hx, hy - 0.15, hz + 0.75);                    // upper jaw / snout
+      box(0.66, 0.34, 1.1, H, hx, hy - 0.5, hz + 0.7);                     // lower jaw
+      for (let t = -2; t <= 2; t++) { cone(0.12, 0.26, M.teeth, t * 0.13, hy - 0.32, hz + 1.2, Math.PI); cone(0.1, 0.22, M.teeth, t * 0.13, hy - 0.5, hz + 1.15, 0); }  // fangs
+      box(0.5, 0.12, 0.3, H, hx, hy + 0.34, hz + 0.2);                     // brow
+      for (const s of [-1, 1]) sph(0.2, M.eye, s * 0.42, hy + 0.18, hz + 0.32);  // glowing eyes
+      // tail — tapering boxes
+      for (let i = 0; i < 6; i++) { const t = i / 6; box(0.9 - t * 0.7, 0.8 - t * 0.6, 0.6, H, 0, 3.0 - t * 0.9, -1.1 - i * 0.55, 0.12); }
+      // tiny arms
+      for (const s of [-1, 1]) { const a = box(0.18, 0.5, 0.18, H, s * 0.7, 2.9, 0.9); a.rotation.x = 0.7; cone(0.14, 0.5, H, s * 0.7, 2.55, 1.2, 0.9); for (let f = -1; f <= 1; f++) cone(0.05, 0.16, M.claw, s * 0.7 + f * 0.06, 2.3, 1.45, 1.2); }
+    });
+    body.parent = root;
+    const leg = (sx) => {
+      const lt = new BABYLON.TransformNode("dleg", scene); lt.parent = root; lt.position.set(sx * 0.55, 2.4, 0);
+      const m = merge((tmp, parts) => {
+        const cap = (r, h, x, y, z, rx) => { const e = MB.CreateCapsule("dl", { radius: r, height: h }, scene); e.material = H; e.parent = tmp; e.position.set(x, y, z); if (rx) e.rotation.x = rx; parts.push(e); };
+        cap(0.5, 1.3, 0, -0.7, -0.1);                                      // thigh
+        cap(0.34, 1.3, 0, -1.7, 0.15, -0.3);                              // shin (angled)
+        const f = MB.CreateBox("df", { width: 0.5, height: 0.25, depth: 1.1 }, scene); f.material = H; f.parent = tmp; f.position.set(0, -2.4, 0.4); parts.push(f);
+        for (let t = -1; t <= 1; t++) { const c = MB.CreateCylinder("dl", { diameterTop: 0.02, diameterBottom: 0.12, height: 0.3, tessellation: 6 }, scene); c.material = M.claw; c.parent = tmp; c.position.set(t * 0.16, -2.45, 1.0); c.rotation.x = 1.4; parts.push(c); }
+      });
+      m.parent = lt; return lt;
+    };
+    const legL = leg(-1), legR = leg(1);
+    const mouth = MB.CreateBox("dMouth", { size: 0.08 }, scene); mouth.parent = root; mouth.position.set(0, 4.3, 3.3); mouth.isVisible = false;
+    const fire = makeBreathFire(mouth, 1.3);
+    return { root, legL, legR, mouth, fire };
+  }
+  function buildDinos() {
+    for (let i = 0; i < 5; i++) {
+      const ang = Math.random() * 6.28, rad = 180 + Math.random() * 640, scale = 2.2 + Math.random() * 2.6;
+      dinos.push({
+        scale, x: Math.cos(ang) * rad, z: Math.sin(ang) * rad,
+        heading: Math.random() * 6.28, turn: (Math.random() - 0.5) * 0.18,
+        speed: 4 + Math.random() * 4, walk: Math.random() * 6, walkSp: 2.4 + Math.random() * 1.2,
+        breathT: 1 + Math.random() * 4, breathing: false,
+        node: null, legL: null, legR: null, mouth: null, fire: null,
+      });
+    }
+  }
+  function spawnDino(it) {
+    const d = makeDino();
+    it.node = d.root; it.legL = d.legL; it.legR = d.legR; it.mouth = d.mouth; it.fire = d.fire;
+    d.root.scaling.setAll(it.scale);
+    d.root.position.set(it.x, 0.6 * it.scale, it.z);
+  }
+  function animateDinos(dt) {
+    for (const d of dinos) {
+      if (!d.node) continue;
+      d.heading += d.turn * dt;
+      d.x += Math.sin(d.heading) * d.speed * dt; d.z += Math.cos(d.heading) * d.speed * dt;
+      if (d.x * d.x + d.z * d.z > 940 * 940) { d.heading = Math.atan2(-d.x, -d.z); d.turn = (Math.random() - 0.5) * 0.18; }
+      d.walk += d.walkSp * dt;
+      const sw = Math.sin(d.walk) * 0.55;
+      d.legL.rotation.x = sw; d.legR.rotation.x = -sw;
+      d.node.position.set(d.x, 0.6 * d.scale + Math.abs(Math.sin(d.walk)) * 0.05 * d.scale, d.z);
+      d.node.rotation.y = d.heading;
+      breathe(d, dt, d.scale);
+    }
+  }
+
   // ---- Horror background score -------------------------------------------
   // Plays a real licensed track if one is supplied (window.HORROR_MUSIC_URL or
   // a file at audio/horror.mp3); otherwise synthesises a cinematic horror bed
@@ -535,17 +747,11 @@
   function startAudio() { startTrack(); startAmbient(); }
 
   function startTrack() {
-    const local = /^(127\.|localhost$|0\.0\.0\.0|\[?::1)/.test(location.hostname);
-    const urls = window.HORROR_MUSIC_URL ? [window.HORROR_MUSIC_URL]
-      : (local ? [] : [   // localhost (tests): no external fetch, just the synth bed
-        "audio/horror.mp3",
-        "https://freepd.com/music/Ghost%20Processional.mp3",
-        "https://freepd.com/music/Darkness%20Speaks.mp3",
-        "https://freepd.com/music/Anxiety.mp3",
-        "https://freepd.com/music/Long%20Note%20Two.mp3",
-        "https://freepd.com/music/Mournful.mp3",
-      ]);
-    if (!urls.length) return;
+    // A real, SAME-ORIGIN file is the only reliable iPhone path: it loads with
+    // no CDN dependency and HTML5 media playback plays through the iOS silent
+    // switch (the Web Audio synth bed below does NOT). Drop in your own track
+    // by setting window.HORROR_MUSIC_URL or replacing audio/horror.wav.
+    const urls = window.HORROR_MUSIC_URL ? [window.HORROR_MUSIC_URL, "audio/horror.wav"] : ["audio/horror.wav"];
     try {
       const a = document.createElement("audio");
       a.loop = true; a.preload = "auto"; a.setAttribute("playsinline", ""); a.volume = muted ? 0 : MUSIC_VOL;
@@ -844,6 +1050,8 @@
     ensureList(peds, spawnPed, 110, 150, p, null);
     ensureList(ghosts, spawnGhost, 230, 270, p, null);   // glowing — visible haunting the skyline from a distance
     ensureList(giants, spawnGiant, 420, 470, p, null);   // tower-tall — visible from afar, so a wider radius
+    ensureList(rhinos, spawnRhino, 170, 215, p, null);   // ground beasts — meet them on the streets
+    ensureList(dinos, spawnDino, 300, 350, p, null);     // tower over the skyline → wider radius
     updateFireFX(p);                          // burning building emits only when you're near
   }
   function ensureList(list, makeFn, sR, dR, p, keep) {
@@ -859,6 +1067,7 @@
     if (it.agg) { it.agg.dispose(); it.agg = null; }
     if (it.collider && it.collider !== it.node) it.collider.dispose();
     it.collider = null;
+    if (it.fire) { it.fire.dispose(); it.fire = null; }   // fire jet exists only while spawned
     // Dispose the meshes only — NOT the shared/cached sub-materials. Merged
     // actors own per-instance MultiMaterial wrappers; collect and dispose just
     // those wrappers (keeping their shared sub-materials) so they don't pile up.
@@ -867,7 +1076,7 @@
     if (it.node.getChildMeshes) for (const c of it.node.getChildMeshes()) if (c.material) mms.push(c.material);
     it.node.dispose(false, false);
     for (const m of mms) if (m && m.getClassName && m.getClassName() === "MultiMaterial") m.dispose(false, false);
-    it.node = null; it.rotor = null; it.tailRotor = null; it.legL = null; it.legR = null;
+    it.node = null; it.rotor = null; it.tailRotor = null; it.legL = null; it.legR = null; it.legs = null; it.mouth = null;
   }
 
   // ---- Actor physics: nearby actors are SOLID -----------------------------
@@ -1345,6 +1554,8 @@
     animateBirds(dt);
     animateGhosts(dt);
     animateGiants(dt);
+    animateRhinos(dt);
+    animateDinos(dt);
     maybeManageActors(heroMesh.position);
     if (state !== S.PLAYING) { animateIdle(dt); updateCamera(dt); return; }
 

@@ -1,25 +1,32 @@
 # Horror background score
 
-On the deployed site the game streams a real **CC0 / public-domain horror
-track** from FreePD (default: *"Ghost Processional"*, with CC0 fallbacks). If
-none can load (offline, or host unreachable) it falls back to a cinematic horror
-bed **synthesised in the engine** (Web Audio) — a dissonant drone + tritone,
-atonal high shimmer, wind, a slow heartbeat and dissonant stingers through a
-convolution reverb. The synth has no asset cost and works offline.
+The game plays a **real, same-origin track**: `audio/horror.wav`. This is the
+only reliable path on iPhone — it loads with no CDN dependency, and HTML5 media
+playback plays **through the iOS silent/ring switch** (the Web Audio synth
+fallback does NOT; iOS mutes Web Audio when the ring switch is off).
 
-## Use a real licensed track instead
+`audio/horror.wav` is generated, royalty-free, and committed to the repo. It is
+a seamless 30 s loop: a dissonant low drone + sub rumble, slow swells, atonal
+high shimmer, wind, a slow double-thump heartbeat and reverberant minor-2nd
+stingers. Regenerate it with:
 
-To play an actual professional horror track, supply an audio file — the engine
-will use it and skip the synth automatically (and fall back to the synth if it
-can't load):
+```
+node scripts/make-music.mjs
+```
 
-1. **Drop a file here:** `audio/horror.mp3` (mp3/ogg/m4a all fine).
-2. **Or point at a URL** (e.g. a royalty-free track you host): set
-   `window.HORROR_MUSIC_URL = "https://…/track.mp3";` before `game.js` loads
-   (e.g. add it in `firebase-config.js`).
+The track is fetched **only on the play gesture** (never at initial page load)
+and is not in the service-worker precache, so it has zero impact on load time.
 
-Please use music you have the rights to — e.g. royalty-free / Creative-Commons
-horror tracks (Kevin MacLeod's incompetech.com, Pixabay, etc. with attribution).
-Commercial/film tracks are copyrighted and shouldn't be committed here.
+If the file can't load, the game falls back to a Web-Audio synth bed (works
+offline, but obeys the iOS silent switch).
 
-A 🔊/🔇 button in the HUD mutes/unmutes either source.
+## Use a different track instead
+
+1. **Replace the file:** drop your own `audio/horror.wav` (or `.mp3`) here.
+2. **Or point at a URL:** set `window.HORROR_MUSIC_URL = "https://…/track.mp3";`
+   before `game.js` loads (e.g. in `firebase-config.js`).
+
+Please use music you have the rights to (royalty-free / Creative-Commons, or
+your own). Commercial/film/streamed tracks are copyrighted — don't commit them.
+
+A 🔊/🔇 button in the HUD mutes/unmutes the score.
