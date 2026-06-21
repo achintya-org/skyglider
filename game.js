@@ -42,6 +42,11 @@
   // blow anyone away. Rockets fly out and detonate with an area blast.
   const GUN_RANGE = 700, FIRE_CD = 0.7, GUN_AIM = -1.42;   // metres, seconds between launches, shoulder pose
   const ROCKET_SPEED = 95, BLAST_R = 16;                   // metres/sec, explosion kill radius
+  // The Zoo — every creature (ghosts, giants, rhinos, dinos) lives penned in one
+  // enclosure far from spawn. The whole creature system is dormant (zero cost)
+  // until the player travels there; the rest of the world stays empty & light.
+  const ZOO_X = 780, ZOO_Z = 140, ZOO_R = 62;              // enclosure centre + roam radius (metres)
+  const ZOO_NEAR = 250, ZOO_FAR = 320;                     // load creatures within NEAR, unload past FAR
   const CAM_PITCH_MIN = -0.45, CAM_PITCH_MAX = 1.15;
   const CAM_DIST_WALK = 6.5, CAM_DIST_FLY = 11, CAM_LERP = 0.12;
 
@@ -53,11 +58,13 @@
 
   let engine, scene, heroMesh, heroBody, model, joints = {}, cam, shadowGen;
   let buildings = [], water, traffic = [], peds = [], birds = [], ghosts = [], giants = [], rhinos = [], dinos = [];
+  let nearZoo = false;                       // creature system is active only near the zoo
   let enterables = [], obstacles = [], drivingCar = null, carHeading = 0, carSpeed = 0, heliVel = null;
   let camYaw = 0, camPitch = 0.25, modelYaw = 0, flyYaw = 0, flyPitch = 0, boostE = 1, animPhase = 0, animT = 0;
   let grounded = false, pointerLocked = false, lockedOnce = false;
-  // Rocket launcher: event-driven — costs ~0 until you actually pull the trigger.
-  let firing = false, fireCD = 0, fxT = 0, dying = [], rockets = [];
+  // Rocket launcher: opt-in (off by default) + event-driven — costs ~0 unless
+  // you take it out and pull the trigger.
+  let armed = false, firing = false, fireCD = 0, fxT = 0, dying = [], rockets = [];
   let gunPivot = null, muzzle = null, muzzleFlash = null, rocketProto = null;
   let bloodPS = null, boomPS = null, smokePS = null, noiseBuf = null;
   const keys = {};
@@ -115,10 +122,11 @@
     // weapon test hooks (headless): count alive/dead actors, launch, detonate.
     window.__actors = () => {
       const all = [].concat(peds, ghosts, giants, rhinos, dinos);
-      return { alive: all.filter((a) => a.node && !a.dead).length, dead: all.filter((a) => a.dead).length, rockets: rockets.length, dying: dying.length };
+      return { alive: all.filter((a) => a.node && !a.dead).length, dead: all.filter((a) => a.dead).length, rockets: rockets.length, dying: dying.length, nearZoo };
     };
     window.__fire = () => { launchRocket(); return rockets.length; };
     window.__blast = (x, y, z) => { explode(new BABYLON.Vector3(x, y, z), null, null); return window.__actors(); };
+    window.__zoo = () => { heroMesh.position.set(ZOO_X, heroMesh.position.y, ZOO_Z); nearZoo = true; manX = manZ = 1e9; maybeManageActors(heroMesh.position); return window.__actors(); };
     window.__nearestActor = () => {
       const p = heroMesh.position; let best = null, bd = 1e18;
       for (const a of [].concat(peds, ghosts, giants, rhinos, dinos)) {
@@ -210,11 +218,58 @@
     buildPedestrians();
     buildBirds();
     igniteNearestBuilding();
+    buildZoo();
     buildGhosts();
     buildGiants();
     buildRhinos();
     buildDinos();
     setWarAtmosphere();
+  }
+
+  // ---- The Zoo enclosure: a fenced compound far from spawn that holds every
+  // creature. Just static geometry (one merged fence + a pad + a sign) — the
+  // creatures themselves stay dormant until the player arrives. ------------
+  function buildZoo() {
+    const R = ZOO_R + 6;
+    // ground pad — packed dirt
+    const pad = BABYLON.MeshBuilder.CreateGround("zooPad", { width: R * 2 + 8, height: R * 2 + 8 }, scene);
+    pad.position.set(ZOO_X, 0.06, ZOO_Z);
+    const dirt = new BABYLON.StandardMaterial("zooDirt", scene);
+    dirt.diffuseColor = new BABYLON.Color3(0.32, 0.26, 0.19); dirt.specularColor = new BABYLON.Color3(0, 0, 0);
+    pad.material = dirt; pad.receiveShadows = true; pad.freezeWorldMatrix();
+
+    const bar = new BABYLON.StandardMaterial("zooBar", scene);
+    bar.diffuseColor = new BABYLON.Color3(0.16, 0.17, 0.19); bar.specularColor = new BABYLON.Color3(0.3, 0.3, 0.32);
+    const parts = [];
+    const GATE = 16;                          // gap on the south side (facing spawn)
+    const post = (x, z) => { const e = BABYLON.MeshBuilder.CreateBox("zf", { width: 0.4, height: 4.2, depth: 0.4 }, scene); e.material = bar; e.position.set(x, 2.1, z); parts.push(e); };
+    const rail = (x, z, w, d) => { const e = BABYLON.MeshBuilder.CreateBox("zf", { width: w, height: 0.16, depth: d }, scene); e.material = bar; e.position.set(x, 3.4, z); parts.push(e); const e2 = e.clone("zf"); e2.position.y = 1.6; parts.push(e2); };
+    for (const sgn of [-1, 1]) {
+      // north/south fences (run along X), with a gate gap centred on the south side
+      const z = ZOO_Z + sgn * R;
+      if (sgn > 0) { rail(ZOO_X, z, R * 2, 0.16); for (let x = -R; x <= R + 0.1; x += R / 4) post(ZOO_X + x, z); }
+      else {
+        rail(ZOO_X - (R + GATE / 2) / 2, z, R - GATE / 2, 0.16); rail(ZOO_X + (R + GATE / 2) / 2, z, R - GATE / 2, 0.16);
+        for (let x = -R; x <= R + 0.1; x += R / 4) if (Math.abs(ZOO_X + x - ZOO_X) > GATE / 2) post(ZOO_X + x, z);
+      }
+      // east/west fences (run along Z)
+      const x = ZOO_X + sgn * R;
+      rail(x, ZOO_Z, 0.16, R * 2); for (let z2 = -R; z2 <= R + 0.1; z2 += R / 4) post(x, ZOO_Z + z2);
+    }
+    const fence = BABYLON.Mesh.MergeMeshes(parts, true, true, undefined, false, false);
+    if (fence) { fence.name = "zooFence"; fence.isPickable = false; fence.freezeWorldMatrix(); shadowGen.addShadowCaster(fence); }
+
+    // entrance sign arch over the south gate
+    const sign = BABYLON.MeshBuilder.CreateBox("zooSign", { width: GATE + 4, height: 2.2, depth: 0.4 }, scene);
+    sign.position.set(ZOO_X, 6.2, ZOO_Z - R);
+    const st = new BABYLON.DynamicTexture("zooSignTex", { width: 512, height: 128 }, scene, true);
+    const sx = st.getContext(); sx.fillStyle = "#3a2d12"; sx.fillRect(0, 0, 512, 128);
+    sx.fillStyle = "#ffcf4a"; sx.font = "bold 86px sans-serif"; sx.textAlign = "center"; sx.textBaseline = "middle";
+    sx.fillText("◣ ZOO ◢", 256, 70); st.update();
+    const sm = new BABYLON.StandardMaterial("zooSignMat", scene);
+    sm.diffuseTexture = st; sm.emissiveColor = new BABYLON.Color3(0.4, 0.32, 0.08); sm.specularColor = new BABYLON.Color3(0, 0, 0);
+    sign.material = sm; sign.isPickable = false; sign.freezeWorldMatrix();
+    for (const sgn of [-1, 1]) { const gp = BABYLON.MeshBuilder.CreateBox("zooSignPost", { width: 0.6, height: 7.6, depth: 0.6 }, scene); gp.material = bar; gp.position.set(ZOO_X + sgn * (GATE / 2 + 2), 3.8, ZOO_Z - R); gp.isPickable = false; gp.freezeWorldMatrix(); }
   }
 
   // ---- War atmosphere: a smoke-choked, burning sky over the whole city -----
@@ -319,43 +374,24 @@
     setFireActive(dx * dx + dz * dz < 600 * 600);   // only emit within 600 m
   }
 
-  // ---- Scary ghosts: distorted human figures haunting the buildings ------
-  // Lazy actors anchored to buildings; meshes exist only near the player. Three
-  // variants (dark shadow / bleeding corpse / wraith). Roam low around buildings
-  // so you can meet them on foot; walk into one and it latches onto you forever.
+  // ---- Scary ghosts: distorted human figures penned in the zoo -----------
+  // Lazy actors that drift low around anchor points inside the enclosure; meshes
+  // exist only when the player is at the zoo. Six variants (shadow / corpse /
+  // wraith / tall / screamer / reaper).
   function buildGhosts() {
-    if (!buildings.length) return;
-    const N = Math.min(40, buildings.length);
-    for (let i = 0; i < N; i++) {
-      const b = buildings[(i * 5 + 1) % buildings.length];
-      const ext = b.getBoundingInfo().boundingBox.extendSize;
+    for (let i = 0; i < 22; i++) {
       const type = i % 6;
+      const ang = Math.random() * 6.28, rad = Math.random() * (ZOO_R - 12);
+      const ax = ZOO_X + Math.cos(ang) * rad, az = ZOO_Z + Math.sin(ang) * rad;
       ghosts.push({
         type, baseScale: 0.92 + Math.random() * 0.18,   // wraith/tall size is baked into the mesh
         flick: type === 0 || type === 3 || type === 5,
-        ax: b.position.x, az: b.position.z,
-        radius: Math.max(ext.x, ext.z) + 4 + Math.random() * 12,
-        angle: Math.random() * 6.28, angVel: (Math.random() < 0.5 ? -1 : 1) * (0.12 + Math.random() * 0.3),
-        bob: Math.random() * 6, bobSp: 1.1 + Math.random() * 1.0,
-        creep: Math.random() * 6, creepSp: 0.15 + Math.random() * 0.25,
-        baseY: 1.5 + Math.random() * 9, creepAmp: 1.5 + Math.random() * 4,   // low → reachable on foot
-        x: b.position.x, z: b.position.z, node: null, stuck: false,
-      });
-    }
-    // Also some ghosts roaming the streets right around the spawn plaza, so they
-    // are visible (and meet-able on foot) the moment the game opens.
-    for (let i = 0; i < 12; i++) {
-      const ang = Math.random() * 6.28, rad = 16 + Math.random() * 78, type = i % 6;
-      const cx = Math.cos(ang) * rad, cz = Math.sin(ang) * rad;
-      ghosts.push({
-        type, baseScale: 0.92 + Math.random() * 0.18,   // wraith/tall size is baked into the mesh
-        flick: type === 0 || type === 3 || type === 5,
-        ax: cx, az: cz, radius: 5 + Math.random() * 14,
+        ax, az, radius: 4 + Math.random() * 12,
         angle: Math.random() * 6.28, angVel: (Math.random() < 0.5 ? -1 : 1) * (0.12 + Math.random() * 0.3),
         bob: Math.random() * 6, bobSp: 1.1 + Math.random() * 1.0,
         creep: Math.random() * 6, creepSp: 0.15 + Math.random() * 0.25,
         baseY: 1.5 + Math.random() * 6, creepAmp: 1.5 + Math.random() * 3,
-        x: cx, z: cz, node: null, stuck: false,
+        x: ax, z: az, node: null, stuck: false,
       });
     }
   }
@@ -468,13 +504,9 @@
       g.node.rotation.z = near2 < 55 * 55 ? Math.sin(g.bob * 11) * 0.05 : 0;
       g.node.scaling.set(puls, puls, puls);
       if (g.flick) g.node.setEnabled(near2 > 45 * 45 || Math.sin(g.bob * 14 + g.creep) > -0.62);
-      if (stuckGhosts < 12) {                 // walk near one → it latches on
-        const dx = g.x - hp.x, dy = y - hp.y, dz = g.z - hp.z;
-        if (dx * dx + dy * dy + dz * dz < 3.4 * 3.4) {
-          g.stuck = true; g.stickAng = stuckGhosts * 2.39996; g.stickH = (stuckGhosts % 3) * 0.5; stuckGhosts++;
-          playScare();
-        }
-      }
+      // A one-shot scare sting when you get right up to a caged ghost — but it
+      // never latches on or follows, so the zoo stays self-contained.
+      if (!g.scared) { const dx = g.x - hp.x, dz = g.z - hp.z; if (dx * dx + dz * dz < 3.4 * 3.4) { g.scared = true; playScare(); } }
     }
   }
   // One-shot scare sting when a ghost latches on.
@@ -543,11 +575,11 @@
   }
   function buildGiants() {
     for (let i = 0; i < 11; i++) {
-      const tall = i % 4 === 0;                         // ~a quarter are tower-tall
-      const scale = tall ? 14 + Math.random() * 26 : 3 + Math.random() * 3.5;
-      const ang = Math.random() * 6.28, rad = 120 + Math.random() * 700;
+      const tall = i % 4 === 0;                         // ~a quarter loom over the pen
+      const scale = tall ? 9 + Math.random() * 7 : 3 + Math.random() * 3.5;
+      const ang = Math.random() * 6.28, rad = Math.random() * (ZOO_R - 10);
       giants.push({
-        scale, x: Math.cos(ang) * rad, z: Math.sin(ang) * rad,
+        scale, x: ZOO_X + Math.cos(ang) * rad, z: ZOO_Z + Math.sin(ang) * rad,
         heading: Math.random() * 6.28, turn: (Math.random() - 0.5) * 0.1,
         speed: (tall ? 4 : 2) + Math.random() * 2, walk: Math.random() * 6, walkSp: tall ? 1.0 : 2.0,
         node: null, legL: null, legR: null,
@@ -565,7 +597,7 @@
       if (!g.node) continue;
       g.heading += g.turn * dt;
       g.x += Math.sin(g.heading) * g.speed * dt; g.z += Math.cos(g.heading) * g.speed * dt;
-      if (g.x * g.x + g.z * g.z > 950 * 950) g.heading = Math.atan2(-g.x, -g.z);   // turn back toward the city
+      if ((g.x - ZOO_X) ** 2 + (g.z - ZOO_Z) ** 2 > ZOO_R * ZOO_R) g.heading = Math.atan2(ZOO_X - g.x, ZOO_Z - g.z);   // stay in the pen
       g.walk += g.walkSp * dt;
       const sw = Math.sin(g.walk) * 0.5;
       g.legL.rotation.x = sw; g.legR.rotation.x = -sw;
@@ -662,9 +694,9 @@
   }
   function buildRhinos() {
     for (let i = 0; i < 7; i++) {
-      const ang = Math.random() * 6.28, rad = 90 + Math.random() * 620, scale = 1.6 + Math.random() * 1.4;
+      const ang = Math.random() * 6.28, rad = Math.random() * (ZOO_R - 8), scale = 1.6 + Math.random() * 1.4;
       rhinos.push({
-        scale, x: Math.cos(ang) * rad, z: Math.sin(ang) * rad,
+        scale, x: ZOO_X + Math.cos(ang) * rad, z: ZOO_Z + Math.sin(ang) * rad,
         heading: Math.random() * 6.28, turn: (Math.random() - 0.5) * 0.5,
         speed: 5 + Math.random() * 6, walk: Math.random() * 6, walkSp: 5 + Math.random() * 2,
         breathT: 1 + Math.random() * 4, breathing: false,
@@ -683,7 +715,7 @@
       if (!r.node) continue;
       r.heading += r.turn * dt;
       r.x += Math.sin(r.heading) * r.speed * dt; r.z += Math.cos(r.heading) * r.speed * dt;
-      if (r.x * r.x + r.z * r.z > 920 * 920) { r.heading = Math.atan2(-r.x, -r.z); r.turn = (Math.random() - 0.5) * 0.5; }
+      if ((r.x - ZOO_X) ** 2 + (r.z - ZOO_Z) ** 2 > ZOO_R * ZOO_R) { r.heading = Math.atan2(ZOO_X - r.x, ZOO_Z - r.z); r.turn = (Math.random() - 0.5) * 0.5; }
       r.walk += r.walkSp * dt;
       const sw = Math.sin(r.walk) * 0.6;
       r.legs[0].rotation.x = sw; r.legs[3].rotation.x = sw;           // diagonal gait
@@ -753,9 +785,9 @@
   }
   function buildDinos() {
     for (let i = 0; i < 5; i++) {
-      const ang = Math.random() * 6.28, rad = 180 + Math.random() * 640, scale = 2.2 + Math.random() * 2.6;
+      const ang = Math.random() * 6.28, rad = Math.random() * (ZOO_R - 8), scale = 2.2 + Math.random() * 2.6;
       dinos.push({
-        scale, x: Math.cos(ang) * rad, z: Math.sin(ang) * rad,
+        scale, x: ZOO_X + Math.cos(ang) * rad, z: ZOO_Z + Math.sin(ang) * rad,
         heading: Math.random() * 6.28, turn: (Math.random() - 0.5) * 0.18,
         speed: 4 + Math.random() * 4, walk: Math.random() * 6, walkSp: 2.4 + Math.random() * 1.2,
         breathT: 1 + Math.random() * 4, breathing: false,
@@ -774,7 +806,7 @@
       if (!d.node) continue;
       d.heading += d.turn * dt;
       d.x += Math.sin(d.heading) * d.speed * dt; d.z += Math.cos(d.heading) * d.speed * dt;
-      if (d.x * d.x + d.z * d.z > 940 * 940) { d.heading = Math.atan2(-d.x, -d.z); d.turn = (Math.random() - 0.5) * 0.18; }
+      if ((d.x - ZOO_X) ** 2 + (d.z - ZOO_Z) ** 2 > ZOO_R * ZOO_R) { d.heading = Math.atan2(ZOO_X - d.x, ZOO_Z - d.z); d.turn = (Math.random() - 0.5) * 0.18; }
       d.walk += d.walkSp * dt;
       const sw = Math.sin(d.walk) * 0.55;
       d.legL.rotation.x = sw; d.legR.rotation.x = -sw;
@@ -1100,11 +1132,29 @@
     ensureList(enterables, spawnVehicle, 120, 165, p, (it) => it === drivingCar);
     ensureList(traffic, spawnTraffic, 130, 175, p, null);
     ensureList(peds, spawnPed, 110, 150, p, null);
-    ensureList(ghosts, spawnGhost, 230, 270, p, null);   // glowing — visible haunting the skyline from a distance
-    ensureList(giants, spawnGiant, 420, 470, p, null);   // tower-tall — visible from afar, so a wider radius
-    ensureList(rhinos, spawnRhino, 170, 215, p, null);   // ground beasts — meet them on the streets
-    ensureList(dinos, spawnDino, 300, 350, p, null);     // tower over the skyline → wider radius
+    if (nearZoo) {                             // creatures instantiate only at the zoo
+      ensureList(ghosts, spawnGhost, 230, 270, p, null);
+      ensureList(giants, spawnGiant, 250, 300, p, null);   // loom over the pen
+      ensureList(rhinos, spawnRhino, 170, 215, p, null);
+      ensureList(dinos, spawnDino, 250, 300, p, null);
+    }
     updateFireFX(p);                          // burning building emits only when you're near
+  }
+  // Despawn every spawned creature at once — called when the player leaves the
+  // zoo, so nothing animates or holds meshes out in the empty world.
+  function despawnCreatures() {
+    for (const list of [ghosts, giants, rhinos, dinos]) for (const it of list) if (it.node) disposeActor(it);
+  }
+  // The whole creature system is gated here: one squared-distance compare per
+  // frame decides if the zoo is "live". Far away → nothing runs (cost ~0).
+  function updateZoo(dt) {
+    const p = heroMesh.position, dx = p.x - ZOO_X, dz = p.z - ZOO_Z, d2 = dx * dx + dz * dz;
+    if (nearZoo) {
+      if (d2 > ZOO_FAR * ZOO_FAR) { nearZoo = false; despawnCreatures(); return; }   // left → unload
+      animateGhosts(dt); animateGiants(dt); animateRhinos(dt); animateDinos(dt);
+    } else if (d2 < ZOO_NEAR * ZOO_NEAR) {
+      nearZoo = true; manX = manZ = 1e9;       // arrived → force a spawn scan next manage tick
+    }
   }
   function ensureList(list, makeFn, sR, dR, p, keep) {
     const s2 = sR * sR, d2 = dR * dR;
@@ -1473,7 +1523,21 @@
     smokePS = burstSystem("boomSmoke", soft, 220, [0.1, 0.1, 0.11], [0.04, 0.04, 0.05], 2, 7, 7);
     smokePS.minLifeTime = 1.2; smokePS.maxLifeTime = 3; smokePS.minEmitPower = 2; smokePS.maxEmitPower = 8;
     smokePS.color1 = new BABYLON.Color4(0.12, 0.12, 0.13, 0.6); smokePS.color2 = new BABYLON.Color4(0.04, 0.04, 0.05, 0.5);
+
+    gunPivot.setEnabled(false);                // holstered by default — clean, fast start
   }
+  // Take or leave the rocket launcher. When holstered the weapon is fully gone:
+  // no mesh, no aim pose, no reticle, no fire button — the default clean view.
+  function setArmed(on) {
+    armed = on;
+    if (gunPivot) gunPivot.setEnabled(on);
+    if (!on) firing = false;
+    const dot = document.getElementById("dot"); if (dot) dot.classList.toggle("hidden", !on);
+    const wb = document.getElementById("weapon-btn");
+    if (wb) { wb.classList.toggle("on", on); wb.textContent = on ? "🚀 ARMED" : "🚀 ARM"; }
+    if (isTouch()) updateTouchUI();
+  }
+  function toggleArmed() { setArmed(!armed); }
   // Build a pooled, manual-emit particle burst system (starts emitting nothing).
   function burstSystem(name, tex, cap, c1, c2, minS, maxS, gy) {
     const ps = new BABYLON.ParticleSystem(name, cap, scene);
@@ -1732,6 +1796,7 @@
   }
 
   function areaName(p) {
+    if ((p.x - ZOO_X) ** 2 + (p.z - ZOO_Z) ** 2 < (ZOO_R + 10) ** 2) return "THE ZOO";
     if (p.z > 720) return "OCEAN";
     if (p.z > 540) return "COAST";
     if (p.z < -680) return "VILLAGE";
@@ -1751,6 +1816,7 @@
       if (!down || state !== S.PLAYING) return;
       if (e.code === "KeyE") tryEnterExit();
       else if (e.code === "KeyF" && mode !== MODE.DRIVE) toggleMode();
+      else if (e.code === "KeyG") toggleArmed();   // take / leave the rocket launcher
       else if ((e.code === "Enter" || e.code === "KeyT") && window.MP && MP.enabled) MP.openChat();
     };
     window.addEventListener("keydown", (e) => onKey(e, true));
@@ -1772,7 +1838,7 @@
       camPitch = clamp(camPitch + e.movementY * MOUSE_SENS, CAM_PITCH_MIN, CAM_PITCH_MAX);
     });
     // Hold left mouse to fire (once the pointer is locked); release to stop.
-    window.addEventListener("mousedown", (e) => { if (e.button === 0 && state === S.PLAYING && pointerLocked) firing = true; });
+    window.addEventListener("mousedown", (e) => { if (e.button === 0 && armed && state === S.PLAYING && pointerLocked) firing = true; });
     window.addEventListener("mouseup", (e) => { if (e.button === 0) firing = false; });
     window.addEventListener("blur", () => { firing = false; });
 
@@ -1781,6 +1847,8 @@
     $("menu-btn").addEventListener("click", (e) => { e.stopPropagation(); toMenu(); });
     $("pause-btn").addEventListener("click", (e) => { e.stopPropagation(); pauseGame(); });
     $("sound-btn").addEventListener("click", (e) => { e.stopPropagation(); toggleMute(); });
+    const weaponBtn = document.getElementById("weapon-btn");
+    if (weaponBtn) weaponBtn.addEventListener("click", (e) => { e.stopPropagation(); toggleArmed(); });
     const onlineBtn = document.getElementById("online-btn");
     if (onlineBtn) onlineBtn.addEventListener("click", (e) => {
       e.stopPropagation();
@@ -1795,15 +1863,26 @@
 
   function setupTouch() {
     if (!isTouch()) return;
-    const zone = $("stick-zone"), knob = $("stick-knob");
+    // Floating joystick: the pad appears wherever the thumb lands (easy to reach
+    // anywhere in the left zone) with a soft deadzone and full-range response.
+    const zone = $("stick-zone"), base = $("stick-base"), knob = $("stick-knob");
+    const R = 62, DEAD = 0.14;
     let sid = null, sx = 0, sy = 0;
-    const reset = () => { sid = null; knob.style.transform = "translate(-50%,-50%)"; tMoveX = tMoveY = 0; };
-    zone.addEventListener("pointerdown", (e) => { sid = e.pointerId; sx = e.clientX; sy = e.clientY; });
+    const reset = () => { sid = null; base.classList.add("hidden"); knob.style.transform = "translate(-50%,-50%)"; tMoveX = tMoveY = 0; };
+    zone.addEventListener("pointerdown", (e) => {
+      sid = e.pointerId; sx = e.clientX; sy = e.clientY;
+      base.style.left = sx + "px"; base.style.top = sy + "px"; base.classList.remove("hidden");
+      knob.style.transform = "translate(-50%,-50%)";
+    });
     zone.addEventListener("pointermove", (e) => {
       if (e.pointerId !== sid) return;
-      const dx = clamp(e.clientX - sx, -55, 55), dy = clamp(e.clientY - sy, -55, 55);
+      let dx = e.clientX - sx, dy = e.clientY - sy;
+      const d = Math.hypot(dx, dy);
+      if (d > R) { dx = dx / d * R; dy = dy / d * R; }
       knob.style.transform = `translate(calc(-50% + ${dx}px), calc(-50% + ${dy}px))`;
-      tMoveX = dx / 55; tMoveY = -dy / 55;
+      const nx = dx / R, ny = dy / R, m = Math.hypot(nx, ny);
+      if (m < DEAD) { tMoveX = 0; tMoveY = 0; }
+      else { const s = ((m - DEAD) / (1 - DEAD)) / m; tMoveX = nx * s; tMoveY = -ny * s; }
     });
     zone.addEventListener("pointerup", reset); zone.addEventListener("pointercancel", reset);
 
@@ -1849,8 +1928,8 @@
     showBtn($("btn-action"), act);
     showBtn($("btn-fly"), inVeh ? null : (mode === MODE.FLY ? "LAND" : "FLY"));
     showBtn($("btn-down"), (mode === MODE.FLY || mode === MODE.HELI) ? "DOWN" : null);
-    showBtn(document.getElementById("btn-fire"), mode === MODE.WALK ? "FIRE" : null);   // shoot on foot
-    if (mode !== MODE.WALK) firing = false;
+    showBtn(document.getElementById("btn-fire"), (armed && mode === MODE.WALK) ? "FIRE" : null);   // only when armed, on foot
+    if (mode !== MODE.WALK || !armed) firing = false;
     const up = $("btn-up"); if (up) up.textContent = mode === MODE.WALK ? "JUMP" : "UP";
   }
   function showBtn(el, label) {
@@ -1870,19 +1949,16 @@
     animateVehicles(dt);
     animatePedestrians(dt);
     animateBirds(dt);
-    animateGhosts(dt);
-    animateGiants(dt);
-    animateRhinos(dt);
-    animateDinos(dt);
+    updateZoo(dt);                            // creatures animate ONLY when the player is at the zoo
     updateRockets(dt);                        // rockets in flight (only while any exist)
     updateDying(dt);                          // blown-apart bodies (only while any exist)
     updateGunFX(dt);                          // hide the back-blast flash after a few frames
     maybeManageActors(heroMesh.position);
     if (state !== S.PLAYING) { animateIdle(dt); updateCamera(dt); return; }
 
-    // Trigger: fire a rocket while held, on foot, on a cooldown.
+    // Trigger: fire a rocket while held, armed, on foot, on a cooldown.
     if (fireCD > 0) fireCD -= dt;
-    if (firing && mode === MODE.WALK && fireCD <= 0) { launchRocket(); fireCD = FIRE_CD; }
+    if (firing && armed && mode === MODE.WALK && fireCD <= 0) { launchRocket(); fireCD = FIRE_CD; }
 
     // Unified 4-direction intent — arrow keys mirror the touch stick exactly.
     const kR = keys["ArrowRight"] || keys["KeyD"];
@@ -2091,8 +2167,9 @@
     const amp = norm * 0.85;
     const sw = Math.sin(animPhase) * amp;
     setJoint("legL", sw); setJoint("legR", -sw);
-    // Right arm stays raised, sighting down the gun; left arm gives a light swing.
-    setJoint("armR", GUN_AIM); setJoint("armL", -sw * 0.5 - 0.15);
+    // Armed → right arm raised sighting the launcher; unarmed → a natural swing.
+    if (armed) { setJoint("armR", GUN_AIM); setJoint("armL", -sw * 0.5 - 0.15); }
+    else { setJoint("armL", -sw * 0.8); setJoint("armR", sw * 0.8); }
     if (!grounded) { setJoint("legL", -0.3); setJoint("legR", -0.3); }
   }
   function animateFly(dt) {
@@ -2102,8 +2179,8 @@
   function animateIdle(dt) {
     const b = Math.sin(animT * 1.5) * 0.04;
     setJoint("legL", 0); setJoint("legR", 0);
-    // Idle on foot keeps the weapon raised and ready.
-    if (mode === MODE.WALK) { setJoint("armR", GUN_AIM + b * 0.5); setJoint("armL", -0.15 + b); }
+    // Armed idle keeps the launcher raised; otherwise arms rest naturally.
+    if (armed && mode === MODE.WALK) { setJoint("armR", GUN_AIM + b * 0.5); setJoint("armL", -0.15 + b); }
     else { setJoint("armL", b); setJoint("armR", -b); }
   }
   function setJoint(key, x) {
