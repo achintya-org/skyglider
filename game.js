@@ -274,9 +274,10 @@
     for (let i = 0; i < N; i++) {
       const b = buildings[(i * 5 + 1) % buildings.length];
       const ext = b.getBoundingInfo().boundingBox.extendSize;
-      const type = i % 3;
+      const type = i % 6;
       ghosts.push({
-        type, baseScale: type === 2 ? 1.35 : 0.95 + Math.random() * 0.2,
+        type, baseScale: type === 2 ? 1.35 : type === 3 ? 1.05 : 0.95 + Math.random() * 0.2,
+        flick: type === 0 || type === 3 || type === 5,
         ax: b.position.x, az: b.position.z,
         radius: Math.max(ext.x, ext.z) + 4 + Math.random() * 12,
         angle: Math.random() * 6.28, angVel: (Math.random() < 0.5 ? -1 : 1) * (0.12 + Math.random() * 0.3),
@@ -289,10 +290,11 @@
     // Also some ghosts roaming the streets right around the spawn plaza, so they
     // are visible (and meet-able on foot) the moment the game opens.
     for (let i = 0; i < 12; i++) {
-      const ang = Math.random() * 6.28, rad = 16 + Math.random() * 78, type = i % 3;
+      const ang = Math.random() * 6.28, rad = 16 + Math.random() * 78, type = i % 6;
       const cx = Math.cos(ang) * rad, cz = Math.sin(ang) * rad;
       ghosts.push({
-        type, baseScale: type === 2 ? 1.35 : 0.95 + Math.random() * 0.2,
+        type, baseScale: type === 2 ? 1.35 : type === 3 ? 1.05 : 0.95 + Math.random() * 0.2,
+        flick: type === 0 || type === 3 || type === 5,
         ax: cx, az: cz, radius: 5 + Math.random() * 14,
         angle: Math.random() * 6.28, angVel: (Math.random() < 0.5 ? -1 : 1) * (0.12 + Math.random() * 0.3),
         bob: Math.random() * 6, bobSp: 1.1 + Math.random() * 1.0,
@@ -306,43 +308,71 @@
     const C = (r, g, b) => new BABYLON.Color3(r, g, b);
     const mk = (n, diff, em, a) => { let x = scene.getMaterialByName(n); if (!x) { x = new BABYLON.StandardMaterial(n, scene); x.diffuseColor = diff; x.emissiveColor = em; x.specularColor = C(0, 0, 0); if (a != null) { x.alpha = a; x.backFaceCulling = false; } } return x; };
     return {
-      shadow: mk("gShadow", C(0.02, 0.02, 0.04), C(0.05, 0.05, 0.09), 0.66),
-      pale: mk("gPale", C(0.16, 0.2, 0.18), C(0.24, 0.3, 0.28), 0.74),
-      blood: mk("gBlood", C(0.28, 0, 0), C(0.62, 0.02, 0.02), null),     // glows red via GlowLayer
-      eyeR: mk("gEyeR", C(0.1, 0, 0), C(1, 0.12, 0.1), null),
+      shadow: mk("gShadow", C(0.008, 0.008, 0.012), C(0.015, 0.015, 0.022), 0.86),   // near-black
+      pale: mk("gPale", C(0.02, 0.02, 0.028), C(0.03, 0.03, 0.04), 0.82),            // dark too
+      blood: mk("gBlood", C(0.32, 0, 0), C(0.72, 0.02, 0.02), null),     // glows red via GlowLayer
+      eyeR: mk("gEyeR", C(0.1, 0, 0), C(1, 0.1, 0.08), null),
       eyeD: mk("gEyeD", C(0.01, 0.01, 0.02), C(0, 0, 0), null),
     };
   }
   function makeGhost(type) {
-    const M = ghostMats();
-    const body = type === 0 ? M.shadow : M.pale;
-    const eye = type === 1 ? M.eyeD : M.eyeR;       // bleeder has dark eyes, others glow red
-    const bleed = type >= 1;
+    const M = ghostMats(), MB = BABYLON.MeshBuilder;
     const root = new BABYLON.TransformNode("ghost", scene);
-    const box = (opt, mtl, x, y, z) => { const e = BABYLON.MeshBuilder.CreateBox("g", opt, scene); e.material = mtl; e.parent = root; e.position.set(x, y, z); e.isPickable = false; return e; };
-    const sph = (d, seg, mtl, x, y, z) => { const e = BABYLON.MeshBuilder.CreateSphere("g", { diameter: d, segments: seg }, scene); e.material = mtl; e.parent = root; e.position.set(x, y, z); e.isPickable = false; return e; };
-    // hunched torso + tilted head
-    const torso = box({ width: 0.5, height: 0.85, depth: 0.3 }, body, 0, 1.25, 0); torso.rotation.x = 0.22;
-    const head = sph(0.42, 8, body, 0, 1.82, 0.12); head.rotation.z = 0.22;
-    // long reaching distorted arms
-    for (const s of [-1, 1]) {
-      const j = new BABYLON.TransformNode("ga", scene); j.parent = root; j.position.set(s * 0.28, 1.55, 0.05); j.rotation.z = s * 0.5; j.rotation.x = -0.7;
-      const arm = BABYLON.MeshBuilder.CreateCapsule("garm", { radius: 0.07, height: 1.3 }, scene); arm.material = body; arm.parent = j; arm.position.y = -0.62; arm.isPickable = false;
-      const hand = BABYLON.MeshBuilder.CreateSphere("ghand", { diameter: 0.22, segments: 6 }, scene); hand.material = body; hand.parent = j; hand.position.y = -1.25; hand.scaling.set(1, 0.7, 1.5); hand.isPickable = false;
-      if (bleed) { const dp = BABYLON.MeshBuilder.CreateBox("gbl", { width: 0.05, height: 0.45, depth: 0.05 }, scene); dp.material = M.blood; dp.parent = j; dp.position.y = -1.5; dp.isPickable = false; }
+    const box = (opt, mtl, x, y, z) => { const e = MB.CreateBox("g", opt, scene); e.material = mtl; e.parent = root; e.position.set(x, y, z); e.isPickable = false; return e; };
+    const sph = (d, seg, mtl, x, y, z) => { const e = MB.CreateSphere("g", { diameter: d, segments: seg }, scene); e.material = mtl; e.parent = root; e.position.set(x, y, z); e.isPickable = false; return e; };
+    const limb = (mtl, sx, py, rz, rx, rad, len) => { const j = new BABYLON.TransformNode("ga", scene); j.parent = root; j.position.set(sx, py, 0.05); j.rotation.z = rz; j.rotation.x = rx; const a = MB.CreateCapsule("garm", { radius: rad, height: len }, scene); a.material = mtl; a.parent = j; a.position.y = -len / 2; a.isPickable = false; return j; };
+    const trail = (mtl) => { sph(0.72, 8, mtl, 0, 0.7, 0).scaling.set(1, 1.5, 0.88); sph(0.54, 6, mtl, 0.07, 0.18, 0).scaling.set(1, 1.7, 0.78); sph(0.4, 6, mtl, -0.06, -0.3, 0).scaling.set(1, 1.6, 0.7); };
+    const D = M.shadow, P = M.pale, B = M.blood;
+
+    if (type === 3) {                       // TALL — faceless slender giant
+      box({ width: 0.32, height: 2.0, depth: 0.26 }, D, 0, 1.85, 0);
+      sph(0.32, 8, D, 0, 2.92, 0);          // blank featureless head
+      const aL = limb(D, -0.18, 2.6, -0.18, 0.1, 0.055, 2.3), aR = limb(D, 0.18, 2.6, 0.18, 0.1, 0.055, 2.3);   // arms to the ground
+      for (const j of [aL, aR]) { const d = MB.CreateBox("gbl", { width: 0.05, height: 0.6, depth: 0.05 }, scene); d.material = B; d.parent = j; d.position.y = -2.4; d.isPickable = false; }
+      box({ width: 0.05, height: 1.2, depth: 0.05 }, B, 0.05, 1.4, 0.14);   // blood down the body
+      sph(0.45, 6, D, 0, 0.6, 0).scaling.set(1, 2.0, 0.8);
+      return root;
     }
-    // tattered trailing lower body
-    sph(0.74, 8, body, 0, 0.78, 0).scaling.set(1, 1.4, 0.9);
-    sph(0.56, 6, body, 0.08, 0.25, 0).scaling.set(1, 1.7, 0.8);
-    sph(0.4, 6, body, -0.07, -0.25, 0).scaling.set(1, 1.6, 0.7);
-    // face: eyes + gaping mouth
+    if (type === 4) {                       // SCREAMER — many eyes, gaping mouth, gushing blood
+      box({ width: 0.52, height: 0.85, depth: 0.3 }, P, 0, 1.25, 0).rotation.x = 0.12;
+      sph(0.46, 8, P, 0, 1.86, 0.04).rotation.x = -0.45;                  // head thrown back
+      sph(0.3, 8, M.eyeD, 0, 1.78, 0.27).scaling.set(0.7, 1.5, 0.6);      // gaping mouth
+      for (const p of [[-0.13, 1.98, 0.3], [0.13, 1.98, 0.3], [0, 2.13, 0.24], [-0.06, 1.88, 0.34], [0.08, 1.9, 0.33]]) sph(0.1, 6, M.eyeR, p[0], p[1], p[2]);
+      box({ width: 0.13, height: 0.8, depth: 0.06 }, B, 0, 1.38, 0.28); box({ width: 0.05, height: 0.55, depth: 0.05 }, B, 0.11, 1.5, 0.28);
+      limb(P, -0.3, 1.6, 1.05, -0.3, 0.07, 1.15); limb(P, 0.3, 1.6, -1.05, -0.3, 0.07, 1.15);    // arms flung up
+      trail(P);
+      return root;
+    }
+    if (type === 5) {                       // REAPER — hooded skull
+      box({ width: 0.6, height: 1.0, depth: 0.4 }, D, 0, 1.3, 0);
+      sph(0.72, 8, D, 0, 1.95, -0.02).scaling.set(1, 1.25, 1);            // hood
+      sph(0.34, 8, P, 0, 1.95, 0.2);                                      // skull face
+      for (const s of [-0.1, 0.1]) sph(0.12, 6, M.eyeR, s, 1.98, 0.36);
+      sph(0.13, 6, M.eyeD, 0, 1.84, 0.37).scaling.set(1.2, 0.7, 0.6);
+      const jL = limb(P, -0.3, 1.5, 0.4, -0.6, 0.05, 1.2), jR = limb(P, 0.3, 1.5, -0.4, -0.6, 0.05, 1.2);
+      for (const j of [jL, jR]) { const h = MB.CreateSphere("gh", { diameter: 0.16, segments: 6 }, scene); h.material = P; h.parent = j; h.position.y = -1.2; h.scaling.set(1, 0.6, 1.6); h.isPickable = false; const d = MB.CreateBox("gbl", { width: 0.045, height: 0.5, depth: 0.045 }, scene); d.material = B; d.parent = j; d.position.y = -1.4; d.isPickable = false; }
+      box({ width: 0.05, height: 0.4, depth: 0.05 }, B, 0, 1.66, 0.36); box({ width: 0.05, height: 0.55, depth: 0.05 }, B, 0.1, 1.0, 0.18);   // blood from skull + body
+      sph(0.66, 6, D, 0, 0.55, 0).scaling.set(1, 1.8, 0.85); sph(0.46, 6, D, 0, -0.1, 0).scaling.set(1, 1.6, 0.7);
+      return root;
+    }
+
+    // types 0-2: distorted humans — shadow / bleeder / wraith (all bleed now)
+    const body = type === 0 ? D : P, eye = type === 1 ? M.eyeD : M.eyeR, bleed = true;
+    box({ width: 0.5, height: 0.85, depth: 0.3 }, body, 0, 1.25, 0).rotation.x = 0.22;
+    sph(0.42, 8, body, 0, 1.82, 0.12).rotation.z = 0.22;
+    for (const s of [-1, 1]) {
+      const j = limb(body, s * 0.28, 1.55, s * 0.5, -0.7, 0.07, 1.3);
+      const hand = MB.CreateSphere("ghand", { diameter: 0.22, segments: 6 }, scene); hand.material = body; hand.parent = j; hand.position.y = -1.3; hand.scaling.set(1, 0.7, 1.5); hand.isPickable = false;
+      if (bleed) { const dp = MB.CreateBox("gbl", { width: 0.05, height: 0.55, depth: 0.05 }, scene); dp.material = B; dp.parent = j; dp.position.y = -1.6; dp.isPickable = false; }
+    }
+    trail(body);
     for (const s of [-0.11, 0.11]) sph(0.13, 6, eye, s, 1.86, 0.34);
     sph(0.16, 6, M.eyeD, 0, 1.72, 0.35).scaling.set(0.8, 1.6, 0.6);
-    if (bleed) {                                    // blood oozing from eyes, mouth, torso
-      for (const s of [-0.11, 0.11]) box({ width: 0.04, height: 0.34, depth: 0.04 }, M.blood, s, 1.7, 0.37);
-      box({ width: 0.06, height: 0.42, depth: 0.05 }, M.blood, 0, 1.5, 0.35);
-      box({ width: 0.05, height: 0.55, depth: 0.05 }, M.blood, 0.12, 1.05, 0.17);
-      box({ width: 0.04, height: 0.38, depth: 0.04 }, M.blood, -0.1, 0.95, 0.17);
+    if (bleed) {                            // blood oozing from eyes, mouth, torso
+      for (const s of [-0.11, 0.11]) box({ width: 0.04, height: 0.36, depth: 0.04 }, B, s, 1.7, 0.37);
+      box({ width: 0.06, height: 0.52, depth: 0.05 }, B, 0, 1.47, 0.35);
+      box({ width: 0.05, height: 0.62, depth: 0.05 }, B, 0.12, 1.0, 0.17);
+      box({ width: 0.04, height: 0.44, depth: 0.04 }, B, -0.1, 0.92, 0.17);
     }
     return root;
   }
@@ -356,6 +386,7 @@
       g.bob += g.bobSp * dt;
       const puls = g.baseScale * (1 + Math.sin(g.bob * 1.2) * 0.06);
       if (g.stuck) {                         // clings to the player and follows forever
+        g.node.setEnabled(true);
         const a = g.stickAng + animT * 0.35;
         const gx = hp.x + Math.cos(a) * 1.25, gz = hp.z + Math.sin(a) * 1.25;
         const gy = hp.y + 0.3 + g.stickH + Math.sin(g.bob) * 0.25;
@@ -370,8 +401,12 @@
       g.x = g.ax + Math.cos(g.angle) * r; g.z = g.az + Math.sin(g.angle) * r;
       const y = Math.max(0.8, g.baseY + Math.sin(g.creep) * g.creepAmp + Math.sin(g.bob) * 0.7);
       g.node.position.set(g.x, y, g.z);
-      g.node.rotation.y = -g.angle + Math.PI / 2 + Math.sin(g.bob * 0.6) * 0.35;
+      const ddx = hp.x - g.x, ddz = hp.z - g.z, near2 = ddx * ddx + ddz * ddz;
+      // turn to STARE at the player when close; twitch; glitch-flicker
+      g.node.rotation.y = near2 < 32 * 32 ? Math.atan2(ddx, ddz) : (-g.angle + Math.PI / 2 + Math.sin(g.bob * 0.6) * 0.35);
+      g.node.rotation.z = near2 < 55 * 55 ? Math.sin(g.bob * 11) * 0.05 : 0;
       g.node.scaling.set(puls, puls, puls);
+      if (g.flick) g.node.setEnabled(near2 > 45 * 45 || Math.sin(g.bob * 14 + g.creep) > -0.62);
       if (stuckGhosts < 12) {                 // walk near one → it latches on
         const dx = g.x - hp.x, dy = y - hp.y, dz = g.z - hp.z;
         if (dx * dx + dy * dy + dz * dz < 3.4 * 3.4) {
@@ -403,42 +438,35 @@
   let ambient = null, musicEl = null, muted = false;
   const MUSIC_VOL = 0.55;
 
-  // Called from the play gesture: start the synth bed immediately (so audio is
-  // guaranteed, incl. iOS where the AudioContext must start inside a gesture),
-  // then try to upgrade to a real track.
-  function startAudio() { startAmbient(); startMusic(); }
+  // Called from the play gesture. Two layers so SOMETHING always plays:
+  //  1) an <audio> element UNLOCKED in the gesture (HTMLMedia can play through the
+  //     iOS mute switch when a real track loads), and
+  //  2) the synth bed (Web Audio) — guaranteed offline, but obeys the iOS mute
+  //     switch. Whichever real track loads first fades the synth out.
+  function startAudio() { startTrack(); startAmbient(); }
 
-  function startMusic() {
+  function startTrack() {
     const local = /^(127\.|localhost$|0\.0\.0\.0|\[?::1)/.test(location.hostname);
-    // Real CC0 (public-domain) horror tracks from FreePD, tried in the browser;
-    // first that loads fades out the synth. A user file/URL beats all. External
-    // URLs are skipped on localhost (tests); the synth bed always plays meanwhile.
     const urls = window.HORROR_MUSIC_URL ? [window.HORROR_MUSIC_URL]
-      : ["audio/horror.mp3"].concat(local ? [] : [
+      : (local ? ["audio/horror.mp3"] : [
+        "audio/horror.mp3",
         "https://freepd.com/music/Ghost%20Processional.mp3",
         "https://freepd.com/music/Darkness%20Speaks.mp3",
         "https://freepd.com/music/Anxiety.mp3",
         "https://freepd.com/music/Long%20Note%20Two.mp3",
         "https://freepd.com/music/Mournful.mp3",
       ]);
-    let i = 0;
-    const tryNext = () => {
-      if (musicEl) return;
-      if (i >= urls.length) return;   // none loaded → keep the synth bed playing
-      const a = new Audio(), url = urls[i++];
-      a.loop = true; a.preload = "auto"; a.volume = muted ? 0 : MUSIC_VOL;
-      let done = false;
-      const fail = () => { if (done) return; done = true; tryNext(); };
-      a.addEventListener("canplaythrough", () => {
-        if (done || musicEl) return; done = true; musicEl = a;
-        a.play().then(() => { if (ambient) { try { ambient.master.gain.linearRampToValueAtTime(0, ambient.ctx.currentTime + 2); } catch (e) {} } })
-          .catch(() => { musicEl = null; });   // blocked → keep the synth bed
-      }, { once: true });
-      a.addEventListener("error", fail, { once: true });
-      setTimeout(fail, 6000);
-      try { a.src = url; a.load(); } catch (e) { fail(); }
-    };
-    tryNext();
+    try {
+      const a = document.createElement("audio");
+      a.loop = true; a.preload = "auto"; a.setAttribute("playsinline", ""); a.volume = muted ? 0 : MUSIC_VOL;
+      musicEl = a;
+      let i = 0;
+      a.addEventListener("playing", () => {     // a real track started → fade the synth out
+        if (ambient) { try { ambient.master.gain.linearRampToValueAtTime(0, ambient.ctx.currentTime + 2); } catch (e) {} }
+      });
+      a.addEventListener("error", () => { i++; if (i < urls.length) { a.src = urls[i]; a.load(); a.play().catch(() => {}); } });
+      a.src = urls[i]; a.play().catch(() => {});   // play() IN the gesture → unlocks iOS
+    } catch (e) {}
   }
 
   function makeReverbIR(ctx, secs, decay) {
