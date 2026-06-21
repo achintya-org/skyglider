@@ -264,66 +264,121 @@
     setFireActive(dx * dx + dz * dz < 600 * 600);   // only emit within 600 m
   }
 
-  // ---- Scary ghosts creeping from the buildings (lazy actors) ------------
-  // Light descriptors anchored to buildings; meshes exist only when near the
-  // player and only those animate. Translucent + emissive so they glow.
+  // ---- Scary ghosts: distorted human figures haunting the buildings ------
+  // Lazy actors anchored to buildings; meshes exist only near the player. Three
+  // variants (dark shadow / bleeding corpse / wraith). Roam low around buildings
+  // so you can meet them on foot; walk into one and it latches onto you forever.
   function buildGhosts() {
     if (!buildings.length) return;
-    const N = Math.min(44, buildings.length);
+    const N = Math.min(40, buildings.length);
     for (let i = 0; i < N; i++) {
       const b = buildings[(i * 5 + 1) % buildings.length];
       const ext = b.getBoundingInfo().boundingBox.extendSize;
+      const type = i % 3;
       ghosts.push({
+        type, baseScale: type === 2 ? 1.35 : 0.95 + Math.random() * 0.2,
         ax: b.position.x, az: b.position.z,
-        radius: Math.max(ext.x, ext.z) + 5 + Math.random() * 12,
-        angle: Math.random() * 6.28, angVel: (Math.random() < 0.5 ? -1 : 1) * (0.15 + Math.random() * 0.35),
-        bob: Math.random() * 6, bobSp: 1.3 + Math.random() * 1.2,
+        radius: Math.max(ext.x, ext.z) + 4 + Math.random() * 12,
+        angle: Math.random() * 6.28, angVel: (Math.random() < 0.5 ? -1 : 1) * (0.12 + Math.random() * 0.3),
+        bob: Math.random() * 6, bobSp: 1.1 + Math.random() * 1.0,
         creep: Math.random() * 6, creepSp: 0.15 + Math.random() * 0.25,
-        baseY: 5 + Math.random() * Math.max(8, ext.y), creepAmp: 4 + Math.random() * Math.max(6, ext.y * 0.5),
-        x: b.position.x, z: b.position.z, node: null,
+        baseY: 1.5 + Math.random() * 9, creepAmp: 1.5 + Math.random() * 4,   // low → reachable on foot
+        x: b.position.x, z: b.position.z, node: null, stuck: false,
       });
     }
   }
-  function makeGhost() {
+  function ghostMats() {
+    const C = (r, g, b) => new BABYLON.Color3(r, g, b);
+    const mk = (n, diff, em, a) => { let x = scene.getMaterialByName(n); if (!x) { x = new BABYLON.StandardMaterial(n, scene); x.diffuseColor = diff; x.emissiveColor = em; x.specularColor = C(0, 0, 0); if (a != null) { x.alpha = a; x.backFaceCulling = false; } } return x; };
+    return {
+      shadow: mk("gShadow", C(0.02, 0.02, 0.04), C(0.05, 0.05, 0.09), 0.66),
+      pale: mk("gPale", C(0.16, 0.2, 0.18), C(0.24, 0.3, 0.28), 0.74),
+      blood: mk("gBlood", C(0.28, 0, 0), C(0.62, 0.02, 0.02), null),     // glows red via GlowLayer
+      eyeR: mk("gEyeR", C(0.1, 0, 0), C(1, 0.12, 0.1), null),
+      eyeD: mk("gEyeD", C(0.01, 0.01, 0.02), C(0, 0, 0), null),
+    };
+  }
+  function makeGhost(type) {
+    const M = ghostMats();
+    const body = type === 0 ? M.shadow : M.pale;
+    const eye = type === 1 ? M.eyeD : M.eyeR;       // bleeder has dark eyes, others glow red
+    const bleed = type >= 1;
     const root = new BABYLON.TransformNode("ghost", scene);
-    const gm = scene.getMaterialByName("ghostMat") || (() => {
-      const x = new BABYLON.StandardMaterial("ghostMat", scene);
-      x.diffuseColor = new BABYLON.Color3(0.05, 0.07, 0.1);
-      x.emissiveColor = new BABYLON.Color3(0.5, 0.66, 0.82);   // pale glow (GlowLayer blooms it)
-      x.specularColor = new BABYLON.Color3(0, 0, 0);
-      x.alpha = 0.5; x.backFaceCulling = false;
-      return x;
-    })();
-    const eye = scene.getMaterialByName("ghostEye") || mat("ghostEye", new BABYLON.Color3(0.02, 0.02, 0.04));
-    const body = BABYLON.MeshBuilder.CreateSphere("gb", { diameter: 1.7, segments: 10 }, scene);
-    body.scaling.set(1, 1.3, 0.9); body.material = gm; body.parent = root; body.isPickable = false;
-    const tail = BABYLON.MeshBuilder.CreateSphere("gtl", { diameter: 1.5, segments: 8 }, scene);
-    tail.scaling.set(0.9, 1.1, 0.8); tail.position.y = -0.9; tail.material = gm; tail.parent = root; tail.isPickable = false;
-    for (const sx of [-1, 1]) {
-      const a = BABYLON.MeshBuilder.CreateSphere("ga", { diameter: 0.5, segments: 6 }, scene);
-      a.scaling.set(1.8, 0.6, 0.6); a.position.set(sx * 0.95, 0.15, 0.1); a.material = gm; a.parent = root; a.isPickable = false;
+    const box = (opt, mtl, x, y, z) => { const e = BABYLON.MeshBuilder.CreateBox("g", opt, scene); e.material = mtl; e.parent = root; e.position.set(x, y, z); e.isPickable = false; return e; };
+    const sph = (d, seg, mtl, x, y, z) => { const e = BABYLON.MeshBuilder.CreateSphere("g", { diameter: d, segments: seg }, scene); e.material = mtl; e.parent = root; e.position.set(x, y, z); e.isPickable = false; return e; };
+    // hunched torso + tilted head
+    const torso = box({ width: 0.5, height: 0.85, depth: 0.3 }, body, 0, 1.25, 0); torso.rotation.x = 0.22;
+    const head = sph(0.42, 8, body, 0, 1.82, 0.12); head.rotation.z = 0.22;
+    // long reaching distorted arms
+    for (const s of [-1, 1]) {
+      const j = new BABYLON.TransformNode("ga", scene); j.parent = root; j.position.set(s * 0.28, 1.55, 0.05); j.rotation.z = s * 0.5; j.rotation.x = -0.7;
+      const arm = BABYLON.MeshBuilder.CreateCapsule("garm", { radius: 0.07, height: 1.3 }, scene); arm.material = body; arm.parent = j; arm.position.y = -0.62; arm.isPickable = false;
+      const hand = BABYLON.MeshBuilder.CreateSphere("ghand", { diameter: 0.22, segments: 6 }, scene); hand.material = body; hand.parent = j; hand.position.y = -1.25; hand.scaling.set(1, 0.7, 1.5); hand.isPickable = false;
+      if (bleed) { const dp = BABYLON.MeshBuilder.CreateBox("gbl", { width: 0.05, height: 0.45, depth: 0.05 }, scene); dp.material = M.blood; dp.parent = j; dp.position.y = -1.5; dp.isPickable = false; }
     }
-    for (const sx of [-0.33, 0.33]) {
-      const e = BABYLON.MeshBuilder.CreateSphere("ge", { diameter: 0.34, segments: 6 }, scene);
-      e.position.set(sx, 0.22, 0.72); e.material = eye; e.parent = root; e.isPickable = false;
+    // tattered trailing lower body
+    sph(0.74, 8, body, 0, 0.78, 0).scaling.set(1, 1.4, 0.9);
+    sph(0.56, 6, body, 0.08, 0.25, 0).scaling.set(1, 1.7, 0.8);
+    sph(0.4, 6, body, -0.07, -0.25, 0).scaling.set(1, 1.6, 0.7);
+    // face: eyes + gaping mouth
+    for (const s of [-0.11, 0.11]) sph(0.13, 6, eye, s, 1.86, 0.34);
+    sph(0.16, 6, M.eyeD, 0, 1.72, 0.35).scaling.set(0.8, 1.6, 0.6);
+    if (bleed) {                                    // blood oozing from eyes, mouth, torso
+      for (const s of [-0.11, 0.11]) box({ width: 0.04, height: 0.34, depth: 0.04 }, M.blood, s, 1.7, 0.37);
+      box({ width: 0.06, height: 0.42, depth: 0.05 }, M.blood, 0, 1.5, 0.35);
+      box({ width: 0.05, height: 0.55, depth: 0.05 }, M.blood, 0.12, 1.05, 0.17);
+      box({ width: 0.04, height: 0.38, depth: 0.04 }, M.blood, -0.1, 0.95, 0.17);
     }
-    const mo = BABYLON.MeshBuilder.CreateSphere("gmo", { diameter: 0.32, segments: 6 }, scene);
-    mo.scaling.set(0.8, 1.5, 0.5); mo.position.set(0, -0.25, 0.72); mo.material = eye; mo.parent = root; mo.isPickable = false;
     return root;
   }
-  function spawnGhost(it) { it.node = makeGhost(); it.node.position.set(it.x, it.baseY, it.z); }
+  function spawnGhost(it) { it.node = makeGhost(it.type); it.node.position.set(it.x, it.baseY, it.z); }
+
+  let stuckGhosts = 0;
   function animateGhosts(dt) {
+    const hp = heroMesh.position;
     for (const g of ghosts) {
       if (!g.node) continue;                 // despawned → no work
-      g.angle += g.angVel * dt; g.bob += g.bobSp * dt; g.creep += g.creepSp * dt;
-      const r = g.radius + Math.sin(g.bob * 0.5) * 2.5;       // drift toward/away (creep out of the wall)
+      g.bob += g.bobSp * dt;
+      const puls = g.baseScale * (1 + Math.sin(g.bob * 1.2) * 0.06);
+      if (g.stuck) {                         // clings to the player and follows forever
+        const a = g.stickAng + animT * 0.35;
+        const gx = hp.x + Math.cos(a) * 1.25, gz = hp.z + Math.sin(a) * 1.25;
+        const gy = hp.y + 0.3 + g.stickH + Math.sin(g.bob) * 0.25;
+        g.node.position.set(gx, gy, gz);
+        g.node.rotation.y = Math.atan2(hp.x - gx, hp.z - gz);   // stare at the player
+        g.node.scaling.set(puls, puls, puls);
+        g.x = hp.x; g.z = hp.z;              // stay "near" so it never despawns
+        continue;
+      }
+      g.angle += g.angVel * dt; g.creep += g.creepSp * dt;
+      const r = g.radius + Math.sin(g.bob * 0.5) * 2.5;          // creep out of / back to the wall
       g.x = g.ax + Math.cos(g.angle) * r; g.z = g.az + Math.sin(g.angle) * r;
-      const y = g.baseY + Math.sin(g.creep) * g.creepAmp + Math.sin(g.bob) * 0.7;
+      const y = Math.max(0.8, g.baseY + Math.sin(g.creep) * g.creepAmp + Math.sin(g.bob) * 0.7);
       g.node.position.set(g.x, y, g.z);
       g.node.rotation.y = -g.angle + Math.PI / 2 + Math.sin(g.bob * 0.6) * 0.35;
-      const s = 1 + Math.sin(g.bob * 1.2) * 0.07;             // eerie pulse
-      g.node.scaling.set(s, s, s);
+      g.node.scaling.set(puls, puls, puls);
+      if (stuckGhosts < 12) {                 // walk near one → it latches on
+        const dx = g.x - hp.x, dy = y - hp.y, dz = g.z - hp.z;
+        if (dx * dx + dy * dy + dz * dz < 3.4 * 3.4) {
+          g.stuck = true; g.stickAng = stuckGhosts * 2.39996; g.stickH = (stuckGhosts % 3) * 0.5; stuckGhosts++;
+          playScare();
+        }
+      }
     }
+  }
+  // One-shot scare sting when a ghost latches on.
+  let sfxCtx = null;
+  function playScare() {
+    if (muted) return;
+    try {
+      if (!sfxCtx) sfxCtx = new (window.AudioContext || window.webkitAudioContext)();
+      const ctx = sfxCtx; if (ctx.state === "suspended") ctx.resume();
+      const t = ctx.currentTime;
+      const o = ctx.createOscillator(); o.type = "sawtooth"; o.frequency.setValueAtTime(900, t); o.frequency.exponentialRampToValueAtTime(110, t + 0.5);
+      const f = ctx.createBiquadFilter(); f.type = "bandpass"; f.frequency.value = 700; f.Q.value = 4;
+      const g = ctx.createGain(); g.gain.setValueAtTime(0.0001, t); g.gain.exponentialRampToValueAtTime(0.28, t + 0.02); g.gain.exponentialRampToValueAtTime(0.0001, t + 0.7);
+      o.connect(f); f.connect(g); g.connect(ctx.destination); o.start(t); o.stop(t + 0.75);
+    } catch (e) {}
   }
 
   // ---- Horror background score -------------------------------------------
@@ -1467,8 +1522,30 @@
     return a + d * t;
   }
 
+  // Show the loaded build (read from game.js's own ?v=) at the bottom, so it's
+  // obvious whether a new version actually loaded or the cache is stale.
+  (function showVersion() {
+    try {
+      const el = document.getElementById("version");
+      const s = document.querySelector('script[src*="game.js"]');
+      const m = s && s.src.match(/[?&]v=([^&]+)/);
+      if (el) el.textContent = "Sky Glider · " + (m ? m[1] : "dev");
+    } catch (e) {}
+  })();
+
+  // Service worker: network-first + auto-apply updates (reload once when a new
+  // worker takes control) so deploys reach players without a manual hard refresh.
   if ("serviceWorker" in navigator) {
-    window.addEventListener("load", () => navigator.serviceWorker.register("./sw.js").catch(() => {}));
+    let refreshing = false;
+    navigator.serviceWorker.addEventListener("controllerchange", () => {
+      if (refreshing) return; refreshing = true; window.location.reload();
+    });
+    window.addEventListener("load", () => {
+      navigator.serviceWorker.register("./sw.js").then((reg) => {
+        reg.update();
+        setInterval(() => reg.update(), 60000);   // poll for new builds while playing
+      }).catch(() => {});
+    });
   }
 
   if (document.readyState === "loading") document.addEventListener("DOMContentLoaded", boot);

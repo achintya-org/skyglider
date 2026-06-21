@@ -278,6 +278,13 @@ kbd {
 #chat-input::placeholder { color: var(--muted); }
 #chat-input:focus { outline: none; }
 
+#version {
+  position: fixed; bottom: 3px; left: 50%; transform: translateX(-50%);
+  z-index: 40; pointer-events: none;
+  font-family: var(--font); font-size: 10px; letter-spacing: 0.06em;
+  color: rgba(150, 170, 200, 0.4);
+}
+
 #err {
   position: fixed; left: 50%; bottom: 18px; transform: translateX(-50%);
   z-index: 30; max-width: 90vw;
