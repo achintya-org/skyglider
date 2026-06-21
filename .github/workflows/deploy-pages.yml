@@ -50,13 +50,8 @@ jobs:
       - name: Checkout
         uses: actions/checkout@v4
 
-      # First-time setup: enable Pages (build type = GitHub Actions) using the
-      # org PAT, which has admin/Pages rights. Harmless if already enabled.
       - name: Configure Pages
         uses: actions/configure-pages@v5
-        with:
-          enablement: true
-          token: ${{ secrets.PAT_TOKEN }}
 
       - name: Upload site artifact
         uses: actions/upload-pages-artifact@v3
