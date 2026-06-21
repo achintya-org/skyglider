@@ -48,7 +48,7 @@
   let mode = MODE.WALK;
 
   let engine, scene, heroMesh, heroBody, model, joints = {}, cam, shadowGen;
-  let buildings = [], water, traffic = [], peds = [], birds = [];
+  let buildings = [], water, traffic = [], peds = [], birds = [], ghosts = [];
   let enterables = [], obstacles = [], drivingCar = null, carHeading = 0, carSpeed = 0, heliVel = null;
   let camYaw = 0, camPitch = 0.25, modelYaw = 0, flyYaw = 0, flyPitch = 0, boostE = 1, animPhase = 0, animT = 0;
   let grounded = false, pointerLocked = false, lockedOnce = false;
@@ -186,6 +186,7 @@
     buildPedestrians();
     buildBirds();
     igniteNearestBuilding();
+    buildGhosts();
   }
 
   // ---- A building on fire near the spawn (flames + smoke) -----------------
@@ -261,6 +262,149 @@
     if (!fireFX) return;
     const dx = p.x - fireFX.pos.x, dz = p.z - fireFX.pos.z;
     setFireActive(dx * dx + dz * dz < 600 * 600);   // only emit within 600 m
+  }
+
+  // ---- Scary ghosts creeping from the buildings (lazy actors) ------------
+  // Light descriptors anchored to buildings; meshes exist only when near the
+  // player and only those animate. Translucent + emissive so they glow.
+  function buildGhosts() {
+    if (!buildings.length) return;
+    const N = Math.min(44, buildings.length);
+    for (let i = 0; i < N; i++) {
+      const b = buildings[(i * 5 + 1) % buildings.length];
+      const ext = b.getBoundingInfo().boundingBox.extendSize;
+      ghosts.push({
+        ax: b.position.x, az: b.position.z,
+        radius: Math.max(ext.x, ext.z) + 5 + Math.random() * 12,
+        angle: Math.random() * 6.28, angVel: (Math.random() < 0.5 ? -1 : 1) * (0.15 + Math.random() * 0.35),
+        bob: Math.random() * 6, bobSp: 1.3 + Math.random() * 1.2,
+        creep: Math.random() * 6, creepSp: 0.15 + Math.random() * 0.25,
+        baseY: 5 + Math.random() * Math.max(8, ext.y), creepAmp: 4 + Math.random() * Math.max(6, ext.y * 0.5),
+        x: b.position.x, z: b.position.z, node: null,
+      });
+    }
+  }
+  function makeGhost() {
+    const root = new BABYLON.TransformNode("ghost", scene);
+    const gm = scene.getMaterialByName("ghostMat") || (() => {
+      const x = new BABYLON.StandardMaterial("ghostMat", scene);
+      x.diffuseColor = new BABYLON.Color3(0.05, 0.07, 0.1);
+      x.emissiveColor = new BABYLON.Color3(0.5, 0.66, 0.82);   // pale glow (GlowLayer blooms it)
+      x.specularColor = new BABYLON.Color3(0, 0, 0);
+      x.alpha = 0.5; x.backFaceCulling = false;
+      return x;
+    })();
+    const eye = scene.getMaterialByName("ghostEye") || mat("ghostEye", new BABYLON.Color3(0.02, 0.02, 0.04));
+    const body = BABYLON.MeshBuilder.CreateSphere("gb", { diameter: 1.7, segments: 10 }, scene);
+    body.scaling.set(1, 1.3, 0.9); body.material = gm; body.parent = root; body.isPickable = false;
+    const tail = BABYLON.MeshBuilder.CreateSphere("gtl", { diameter: 1.5, segments: 8 }, scene);
+    tail.scaling.set(0.9, 1.1, 0.8); tail.position.y = -0.9; tail.material = gm; tail.parent = root; tail.isPickable = false;
+    for (const sx of [-1, 1]) {
+      const a = BABYLON.MeshBuilder.CreateSphere("ga", { diameter: 0.5, segments: 6 }, scene);
+      a.scaling.set(1.8, 0.6, 0.6); a.position.set(sx * 0.95, 0.15, 0.1); a.material = gm; a.parent = root; a.isPickable = false;
+    }
+    for (const sx of [-0.33, 0.33]) {
+      const e = BABYLON.MeshBuilder.CreateSphere("ge", { diameter: 0.34, segments: 6 }, scene);
+      e.position.set(sx, 0.22, 0.72); e.material = eye; e.parent = root; e.isPickable = false;
+    }
+    const mo = BABYLON.MeshBuilder.CreateSphere("gmo", { diameter: 0.32, segments: 6 }, scene);
+    mo.scaling.set(0.8, 1.5, 0.5); mo.position.set(0, -0.25, 0.72); mo.material = eye; mo.parent = root; mo.isPickable = false;
+    return root;
+  }
+  function spawnGhost(it) { it.node = makeGhost(); it.node.position.set(it.x, it.baseY, it.z); }
+  function animateGhosts(dt) {
+    for (const g of ghosts) {
+      if (!g.node) continue;                 // despawned → no work
+      g.angle += g.angVel * dt; g.bob += g.bobSp * dt; g.creep += g.creepSp * dt;
+      const r = g.radius + Math.sin(g.bob * 0.5) * 2.5;       // drift toward/away (creep out of the wall)
+      g.x = g.ax + Math.cos(g.angle) * r; g.z = g.az + Math.sin(g.angle) * r;
+      const y = g.baseY + Math.sin(g.creep) * g.creepAmp + Math.sin(g.bob) * 0.7;
+      g.node.position.set(g.x, y, g.z);
+      g.node.rotation.y = -g.angle + Math.PI / 2 + Math.sin(g.bob * 0.6) * 0.35;
+      const s = 1 + Math.sin(g.bob * 1.2) * 0.07;             // eerie pulse
+      g.node.scaling.set(s, s, s);
+    }
+  }
+
+  // ---- Horror background score -------------------------------------------
+  // Plays a real licensed track if one is supplied (window.HORROR_MUSIC_URL or
+  // a file at audio/horror.mp3); otherwise synthesises a cinematic horror bed
+  // in-engine (no asset/bundle cost, works offline). Starts on the play gesture.
+  let ambient = null, musicEl = null, muted = false;
+  const MUSIC_VOL = 0.55;
+
+  function startMusic() {
+    const url = window.HORROR_MUSIC_URL || "audio/horror.mp3";
+    let fell = false;
+    const fallback = () => { if (fell) return; fell = true; startAmbient(); };
+    try {
+      const a = new Audio();
+      a.loop = true; a.preload = "auto"; a.volume = muted ? 0 : MUSIC_VOL;
+      a.addEventListener("error", fallback, { once: true });
+      a.addEventListener("canplaythrough", () => { musicEl = a; a.play().catch(fallback); }, { once: true });
+      a.src = url; a.load();
+      setTimeout(() => { if (!musicEl) fallback(); }, 4000);   // nothing loaded → synth bed
+    } catch (e) { fallback(); }
+  }
+
+  function makeReverbIR(ctx, secs, decay) {
+    const len = (ctx.sampleRate * secs) | 0, ir = ctx.createBuffer(2, len, ctx.sampleRate);
+    for (let ch = 0; ch < 2; ch++) { const d = ir.getChannelData(ch); for (let i = 0; i < len; i++) d[i] = (Math.random() * 2 - 1) * Math.pow(1 - i / len, decay); }
+    return ir;
+  }
+  function startAmbient() {
+    if (ambient) { try { ambient.ctx.resume(); } catch (e) {} return; }
+    try {
+      const Ctx = window.AudioContext || window.webkitAudioContext;
+      if (!Ctx) return;
+      const ctx = new Ctx();
+      const master = ctx.createGain(); master.gain.value = 0; master.connect(ctx.destination);
+      master.gain.linearRampToValueAtTime(muted ? 0 : 0.2, ctx.currentTime + 5);
+      const conv = ctx.createConvolver(); conv.buffer = makeReverbIR(ctx, 3.5, 2.2);
+      const wet = ctx.createGain(); wet.gain.value = 0.5; conv.connect(wet); wet.connect(master);
+      const bus = ctx.createGain(); bus.connect(master); bus.connect(conv);   // dry + reverb send
+      // dissonant low drone (root, slight detune, tritone, octaves)
+      const lp = ctx.createBiquadFilter(); lp.type = "lowpass"; lp.frequency.value = 300; lp.connect(bus);
+      [55, 55.4, 77.78, 110, 220.6].forEach((f, i) => { const o = ctx.createOscillator(); o.type = i % 2 ? "sine" : "sawtooth"; o.frequency.value = f; const g = ctx.createGain(); g.gain.value = 0.16 / (i + 1); o.connect(g); g.connect(lp); o.start(); });
+      const lfo = ctx.createOscillator(); lfo.frequency.value = 0.05; const lg = ctx.createGain(); lg.gain.value = 180; lfo.connect(lg); lg.connect(lp.frequency); lfo.start();
+      // high atonal shimmer (detuned saws, tremolo) — unease
+      const hp = ctx.createBiquadFilter(); hp.type = "highpass"; hp.frequency.value = 1500; const hg = ctx.createGain(); hg.gain.value = 0.012; hp.connect(hg); hg.connect(bus);
+      [1760, 1764, 2217].forEach((f) => { const o = ctx.createOscillator(); o.type = "sawtooth"; o.frequency.value = f; o.connect(hp); o.start(); });
+      const trem = ctx.createOscillator(); trem.frequency.value = 5.5; const tg = ctx.createGain(); tg.gain.value = 0.009; trem.connect(tg); tg.connect(hg.gain); trem.start();
+      // wind gusts
+      const nb = ctx.createBuffer(1, ctx.sampleRate * 2, ctx.sampleRate); const d = nb.getChannelData(0); for (let i = 0; i < d.length; i++) d[i] = Math.random() * 2 - 1;
+      const noise = ctx.createBufferSource(); noise.buffer = nb; noise.loop = true; const nf = ctx.createBiquadFilter(); nf.type = "bandpass"; nf.frequency.value = 420; nf.Q.value = 0.5;
+      const ng = ctx.createGain(); ng.gain.value = 0.05; noise.connect(nf); nf.connect(ng); ng.connect(bus); noise.start();
+      const wl = ctx.createOscillator(); wl.frequency.value = 0.03; const wlg = ctx.createGain(); wlg.gain.value = 0.035; wl.connect(wlg); wlg.connect(ng.gain); wl.start();
+      ambient = { ctx, master, timers: [] };
+      // slow heartbeat (double thump)
+      const beat = () => {
+        if (!ambient) return; const t = ctx.currentTime;
+        const thump = (at, peak) => { const o = ctx.createOscillator(); o.type = "sine"; o.frequency.setValueAtTime(62, at); o.frequency.exponentialRampToValueAtTime(36, at + 0.2); const g = ctx.createGain(); g.gain.setValueAtTime(0.0001, at); g.gain.exponentialRampToValueAtTime(peak, at + 0.03); g.gain.exponentialRampToValueAtTime(0.0001, at + 0.32); o.connect(g); g.connect(bus); o.start(at); o.stop(at + 0.36); };
+        thump(t, 0.5); thump(t + 0.33, 0.36);
+        ambient.timers.push(setTimeout(beat, 1600 + Math.random() * 1500));
+      };
+      ambient.timers.push(setTimeout(beat, 2200));
+      // dissonant stinger (minor-2nd cluster with long reverb tail)
+      const stinger = () => {
+        if (!ambient) return; const t = ctx.currentTime;
+        const root = [185, 196, 220, 233][Math.floor(Math.random() * 4)] * (Math.random() < 0.3 ? 2 : 1);
+        [root, root * 1.059].forEach((f, k) => { const o = ctx.createOscillator(); o.type = "sine"; o.frequency.value = f; const g = ctx.createGain(); g.gain.value = 0; o.connect(g); g.connect(conv); g.connect(bus); g.gain.linearRampToValueAtTime(0.04, t + 1.4 + k * 0.3); g.gain.linearRampToValueAtTime(0, t + 5); o.start(t); o.stop(t + 5.2); });
+        ambient.timers.push(setTimeout(stinger, 9000 + Math.random() * 12000));
+      };
+      ambient.timers.push(setTimeout(stinger, 5000));
+      ctx.resume();
+    } catch (e) { /* audio unavailable */ }
+  }
+  function setAudio(on) {
+    if (musicEl) { if (on) musicEl.play().catch(() => {}); else musicEl.pause(); }
+    if (ambient) { try { on ? ambient.ctx.resume() : ambient.ctx.suspend(); } catch (e) {} }
+  }
+  function toggleMute() {
+    muted = !muted;
+    if (musicEl) musicEl.volume = muted ? 0 : MUSIC_VOL;
+    if (ambient) ambient.master.gain.value = muted ? 0 : 0.2;
+    const b = document.getElementById("sound-btn"); if (b) b.textContent = muted ? "🔇" : "🔊";
   }
 
   function buildGround() {
@@ -486,6 +630,7 @@
     ensureList(enterables, spawnVehicle, 120, 165, p, (it) => it === drivingCar);
     ensureList(traffic, spawnTraffic, 130, 175, p, null);
     ensureList(peds, spawnPed, 110, 150, p, null);
+    ensureList(ghosts, spawnGhost, 230, 270, p, null);   // glowing — visible haunting the skyline from a distance
     updateFireFX(p);                          // burning building emits only when you're near
   }
   function ensureList(list, makeFn, sR, dR, p, keep) {
@@ -892,6 +1037,7 @@
     $("resume-btn").addEventListener("click", (e) => { e.stopPropagation(); resumeGame(); });
     $("menu-btn").addEventListener("click", (e) => { e.stopPropagation(); toMenu(); });
     $("pause-btn").addEventListener("click", (e) => { e.stopPropagation(); pauseGame(); });
+    $("sound-btn").addEventListener("click", (e) => { e.stopPropagation(); toggleMute(); });
     const onlineBtn = document.getElementById("online-btn");
     if (onlineBtn) onlineBtn.addEventListener("click", (e) => {
       e.stopPropagation();
@@ -978,6 +1124,7 @@
     animateVehicles(dt);
     animatePedestrians(dt);
     animateBirds(dt);
+    animateGhosts(dt);
     maybeManageActors(heroMesh.position);
     if (state !== S.PLAYING) { animateIdle(dt); updateCamera(dt); return; }
 
@@ -1260,6 +1407,7 @@
       reflectOnline();
     }
     maybeManageActors(heroMesh.position);   // ensure nearby actors exist before first input
+    startMusic();                           // horror score (real track if present, else cinematic synth)
     lockPointer();
   }
   function pauseGame() {
@@ -1267,15 +1415,18 @@
     state = S.PAUSED;
     if (document.pointerLockElement) document.exitPointerLock();
     ui.pause.classList.remove("hidden");
+    setAudio(false);
   }
   function resumeGame() {
     if (state !== S.PAUSED) return;
     state = S.PLAYING;
     ui.pause.classList.add("hidden");
+    setAudio(true);
     lockPointer();
   }
   function toMenu() {
     state = S.MENU;
+    setAudio(false);
     if (window.MP && MP.enabled) MP.disconnect();   // stop networking when leaving
     reflectOnline();
     // leave any vehicle and reset to the downtown plaza, on foot

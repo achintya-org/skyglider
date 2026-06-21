@@ -160,6 +160,16 @@ kbd {
   backdrop-filter: blur(8px); -webkit-backdrop-filter: blur(8px);
 }
 
+#sound-btn {
+  position: absolute; top: 14px; left: 14px;
+  pointer-events: auto;
+  width: 42px; height: 42px;
+  font-size: 16px; color: var(--ink);
+  background: var(--glass); border: 1px solid var(--glass-brd);
+  border-radius: 12px; cursor: pointer;
+  backdrop-filter: blur(8px); -webkit-backdrop-filter: blur(8px);
+}
+
 #online-btn {
   position: absolute; top: 14px; right: 64px;
   pointer-events: auto;
