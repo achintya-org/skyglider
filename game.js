@@ -185,6 +185,82 @@
     buildVehicles();
     buildPedestrians();
     buildBirds();
+    igniteNearestBuilding();
+  }
+
+  // ---- A building on fire near the spawn (flames + smoke) -----------------
+  // One bounded effect; emission is gated on distance so it costs ~0 when far.
+  let fireFX = null;
+  function makeSoftTexture() {
+    const t = new BABYLON.DynamicTexture("soft", { width: 64, height: 64 }, scene, false);
+    const c = t.getContext();
+    const g = c.createRadialGradient(32, 32, 0, 32, 32, 32);
+    g.addColorStop(0, "rgba(255,255,255,1)");
+    g.addColorStop(0.45, "rgba(255,255,255,0.5)");
+    g.addColorStop(1, "rgba(255,255,255,0)");
+    c.fillStyle = g; c.fillRect(0, 0, 64, 64); t.update(); t.hasAlpha = true;
+    return t;
+  }
+  function igniteNearestBuilding() {
+    if (!buildings.length) return;
+    let b = buildings[0], bd = Infinity;
+    for (const x of buildings) { const d = x.position.x * x.position.x + x.position.z * x.position.z; if (d < bd) { bd = d; b = x; } }
+    const ext = b.getBoundingInfo().boundingBox.extendSize;   // half-dims (local)
+    const fw = ext.x * 2, fd = ext.z * 2;
+
+    // charred facade
+    const ch = new BABYLON.StandardMaterial("charred", scene);
+    ch.diffuseColor = new BABYLON.Color3(0.06, 0.05, 0.05);
+    ch.emissiveColor = new BABYLON.Color3(0.07, 0.025, 0);
+    ch.specularColor = new BABYLON.Color3(0, 0, 0);
+    b.material = ch;
+
+    const tex = makeSoftTexture();
+    const fire = new BABYLON.ParticleSystem("bldFire", 360, scene);
+    fire.particleTexture = tex;
+    fire.emitter = b.position.clone();
+    fire.minEmitBox = new BABYLON.Vector3(-fw * 0.7, -ext.y, -fd * 0.7);   // spill outside the walls so flames are visible
+    fire.maxEmitBox = new BABYLON.Vector3(fw * 0.7, ext.y * 0.85, fd * 0.7);
+    fire.color1 = new BABYLON.Color4(1, 0.55, 0.12, 1);
+    fire.color2 = new BABYLON.Color4(1, 0.28, 0.0, 1);
+    fire.colorDead = new BABYLON.Color4(0.25, 0.04, 0, 0);
+    fire.minSize = Math.max(3, fw * 0.12); fire.maxSize = Math.max(8, fw * 0.32);
+    fire.minLifeTime = 0.6; fire.maxLifeTime = 1.6;
+    fire.emitRate = 180;
+    fire.blendMode = BABYLON.ParticleSystem.BLENDMODE_ONEONE;
+    fire.gravity = new BABYLON.Vector3(0, 9, 0);
+    fire.direction1 = new BABYLON.Vector3(-1.2, 6, -1.2);
+    fire.direction2 = new BABYLON.Vector3(1.2, 9, 1.2);
+    fire.minEmitPower = 1; fire.maxEmitPower = 3; fire.updateSpeed = 0.02;
+
+    const smoke = new BABYLON.ParticleSystem("bldSmoke", 260, scene);
+    smoke.particleTexture = tex;
+    smoke.emitter = new BABYLON.Vector3(b.position.x, b.position.y + ext.y * 0.7, b.position.z);
+    smoke.minEmitBox = new BABYLON.Vector3(-fw / 2, 0, -fd / 2);
+    smoke.maxEmitBox = new BABYLON.Vector3(fw / 2, ext.y * 0.3, fd / 2);
+    smoke.color1 = new BABYLON.Color4(0.12, 0.12, 0.13, 0.55);
+    smoke.color2 = new BABYLON.Color4(0.05, 0.05, 0.06, 0.45);
+    smoke.colorDead = new BABYLON.Color4(0, 0, 0, 0);
+    smoke.minSize = Math.max(10, fw * 0.45); smoke.maxSize = Math.max(20, fw * 1.0);
+    smoke.minLifeTime = 3; smoke.maxLifeTime = 6;
+    smoke.emitRate = 44;
+    smoke.gravity = new BABYLON.Vector3(3, 16, 0);   // rise + drift
+    smoke.direction1 = new BABYLON.Vector3(-1, 4, -1);
+    smoke.direction2 = new BABYLON.Vector3(2, 7, 1);
+    smoke.minEmitPower = 2; smoke.maxEmitPower = 5; smoke.updateSpeed = 0.02;
+
+    fireFX = { fire, smoke, pos: b.position.clone(), active: false };
+  }
+  function setFireActive(on) {
+    if (!fireFX || fireFX.active === on) return;
+    fireFX.active = on;
+    if (on) { fireFX.fire.start(); fireFX.smoke.start(); }
+    else { fireFX.fire.stop(); fireFX.smoke.stop(); }
+  }
+  function updateFireFX(p) {
+    if (!fireFX) return;
+    const dx = p.x - fireFX.pos.x, dz = p.z - fireFX.pos.z;
+    setFireActive(dx * dx + dz * dz < 600 * 600);   // only emit within 600 m
   }
 
   function buildGround() {
@@ -410,6 +486,7 @@
     ensureList(enterables, spawnVehicle, 120, 165, p, (it) => it === drivingCar);
     ensureList(traffic, spawnTraffic, 130, 175, p, null);
     ensureList(peds, spawnPed, 110, 150, p, null);
+    updateFireFX(p);                          // burning building emits only when you're near
   }
   function ensureList(list, makeFn, sR, dR, p, keep) {
     const s2 = sR * sR, d2 = dR * dR;
