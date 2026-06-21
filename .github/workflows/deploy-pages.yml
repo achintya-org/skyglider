@@ -19,14 +19,16 @@ concurrency:
 jobs:
   # Ensure the github-pages environment permits this branch to deploy.
   # (GitHub may restrict the auto-created environment to the default branch.)
+  # Non-blocking: Pages is already configured from prior runs; if PAT_TOKEN is
+  # unavailable the curl returns 401 but the deploy job runs anyway.
   prepare-env:
     runs-on: ubuntu-latest
+    continue-on-error: true
     steps:
       - name: Allow all branches to deploy to github-pages
         env:
           GH_TOKEN: ${{ secrets.PAT_TOKEN }}
         run: |
-          set -euo pipefail
           code=$(curl -s -o /tmp/env.json -w "%{http_code}" -X PUT \
             -H "Authorization: Bearer $GH_TOKEN" \
             -H "Accept: application/vnd.github+json" \
@@ -35,10 +37,11 @@ jobs:
             -d '{"deployment_branch_policy":null}')
           echo "PUT environments/github-pages -> HTTP $code"
           cat /tmp/env.json
-          test "$code" = "200" || test "$code" = "201"
+          test "$code" = "200" || test "$code" = "201" || echo "Warning: could not update env (already configured or PAT missing)"
 
   deploy:
     needs: prepare-env
+    if: ${{ always() }}
     runs-on: ubuntu-latest
     environment:
       name: github-pages
