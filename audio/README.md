@@ -1,9 +1,11 @@
 # Horror background score
 
-The game plays a cinematic horror score. By default it's **synthesised in the
-engine** (Web Audio) — a dissonant drone + tritone, atonal high shimmer, wind,
-a slow heartbeat and dissonant stingers through a convolution reverb. No asset,
-works offline, no licensing concerns.
+On the deployed site the game streams a real **CC0 / public-domain horror
+track** from FreePD (default: *"Ghost Processional"*, with CC0 fallbacks). If
+none can load (offline, or host unreachable) it falls back to a cinematic horror
+bed **synthesised in the engine** (Web Audio) — a dissonant drone + tritone,
+atonal high shimmer, wind, a slow heartbeat and dissonant stingers through a
+convolution reverb. The synth has no asset cost and works offline.
 
 ## Use a real licensed track instead
 

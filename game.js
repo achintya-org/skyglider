@@ -334,17 +334,32 @@
   const MUSIC_VOL = 0.55;
 
   function startMusic() {
-    const url = window.HORROR_MUSIC_URL || "audio/horror.mp3";
-    let fell = false;
-    const fallback = () => { if (fell) return; fell = true; startAmbient(); };
-    try {
-      const a = new Audio();
+    const local = /^(127\.|localhost$|0\.0\.0\.0|\[?::1)/.test(location.hostname);
+    // Real CC0 (public-domain) horror tracks from FreePD, tried in the browser;
+    // first that loads wins. A user-supplied file/URL beats all; the in-engine
+    // synth bed is the final fallback. External URLs skipped on localhost (tests).
+    const urls = window.HORROR_MUSIC_URL ? [window.HORROR_MUSIC_URL]
+      : ["audio/horror.mp3"].concat(local ? [] : [
+        "https://freepd.com/music/Ghost%20Processional.mp3",
+        "https://freepd.com/music/Darkness%20Speaks.mp3",
+        "https://freepd.com/music/Anxiety.mp3",
+        "https://freepd.com/music/Long%20Note%20Two.mp3",
+        "https://freepd.com/music/Mournful.mp3",
+      ]);
+    let i = 0;
+    const tryNext = () => {
+      if (musicEl) return;
+      if (i >= urls.length) { startAmbient(); return; }   // nothing loaded → synth bed
+      const a = new Audio(), url = urls[i++];
       a.loop = true; a.preload = "auto"; a.volume = muted ? 0 : MUSIC_VOL;
-      a.addEventListener("error", fallback, { once: true });
-      a.addEventListener("canplaythrough", () => { musicEl = a; a.play().catch(fallback); }, { once: true });
-      a.src = url; a.load();
-      setTimeout(() => { if (!musicEl) fallback(); }, 4000);   // nothing loaded → synth bed
-    } catch (e) { fallback(); }
+      let done = false;
+      const fail = () => { if (done) return; done = true; tryNext(); };
+      a.addEventListener("canplaythrough", () => { if (done || musicEl) return; done = true; musicEl = a; a.play().catch(() => startAmbient()); }, { once: true });
+      a.addEventListener("error", fail, { once: true });
+      setTimeout(fail, 6000);
+      try { a.src = url; a.load(); } catch (e) { fail(); }
+    };
+    tryNext();
   }
 
   function makeReverbIR(ctx, secs, decay) {
