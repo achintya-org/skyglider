@@ -276,7 +276,7 @@
       const ext = b.getBoundingInfo().boundingBox.extendSize;
       const type = i % 6;
       ghosts.push({
-        type, baseScale: type === 2 ? 1.35 : type === 3 ? 1.05 : 0.95 + Math.random() * 0.2,
+        type, baseScale: 0.92 + Math.random() * 0.18,   // wraith/tall size is baked into the mesh
         flick: type === 0 || type === 3 || type === 5,
         ax: b.position.x, az: b.position.z,
         radius: Math.max(ext.x, ext.z) + 4 + Math.random() * 12,
@@ -293,7 +293,7 @@
       const ang = Math.random() * 6.28, rad = 16 + Math.random() * 78, type = i % 6;
       const cx = Math.cos(ang) * rad, cz = Math.sin(ang) * rad;
       ghosts.push({
-        type, baseScale: type === 2 ? 1.35 : type === 3 ? 1.05 : 0.95 + Math.random() * 0.2,
+        type, baseScale: 0.92 + Math.random() * 0.18,   // wraith/tall size is baked into the mesh
         flick: type === 0 || type === 3 || type === 5,
         ax: cx, az: cz, radius: 5 + Math.random() * 14,
         angle: Math.random() * 6.28, angVel: (Math.random() < 0.5 ? -1 : 1) * (0.12 + Math.random() * 0.3),
@@ -308,73 +308,79 @@
     const C = (r, g, b) => new BABYLON.Color3(r, g, b);
     const mk = (n, diff, em, a) => { let x = scene.getMaterialByName(n); if (!x) { x = new BABYLON.StandardMaterial(n, scene); x.diffuseColor = diff; x.emissiveColor = em; x.specularColor = C(0, 0, 0); if (a != null) { x.alpha = a; x.backFaceCulling = false; } } return x; };
     return {
-      shadow: mk("gShadow", C(0.008, 0.008, 0.012), C(0.015, 0.015, 0.022), 0.86),   // near-black
-      pale: mk("gPale", C(0.02, 0.02, 0.028), C(0.03, 0.03, 0.04), 0.82),            // dark too
-      blood: mk("gBlood", C(0.32, 0, 0), C(0.72, 0.02, 0.02), null),     // glows red via GlowLayer
+      shadow: mk("gShadow", C(0.012, 0.012, 0.018), C(0.02, 0.02, 0.028), null),     // opaque near-black
+      pale: mk("gPale", C(0.03, 0.03, 0.038), C(0.035, 0.035, 0.045), null),         // dark grey skin
+      blood: mk("gBlood", C(0.32, 0, 0), C(0.72, 0.02, 0.02), null),                 // glows red via GlowLayer
       eyeR: mk("gEyeR", C(0.1, 0, 0), C(1, 0.1, 0.08), null),
       eyeD: mk("gEyeD", C(0.01, 0.01, 0.02), C(0, 0, 0), null),
+      bone: mk("gBone", C(0.42, 0.4, 0.35), C(0.07, 0.066, 0.055), null),            // teeth / ribs / claws
     };
   }
+  // Elaborate, full-featured ghost. Built from many primitives (skull with eye
+  // sockets/teeth, ribcage, jointed clawed arms, tattered robe) then MERGED into
+  // a single opaque mesh, so all that detail costs ~1 draw call per ghost.
   function makeGhost(type) {
     const M = ghostMats(), MB = BABYLON.MeshBuilder;
-    const root = new BABYLON.TransformNode("ghost", scene);
-    const box = (opt, mtl, x, y, z) => { const e = MB.CreateBox("g", opt, scene); e.material = mtl; e.parent = root; e.position.set(x, y, z); e.isPickable = false; return e; };
-    const sph = (d, seg, mtl, x, y, z) => { const e = MB.CreateSphere("g", { diameter: d, segments: seg }, scene); e.material = mtl; e.parent = root; e.position.set(x, y, z); e.isPickable = false; return e; };
-    const limb = (mtl, sx, py, rz, rx, rad, len) => { const j = new BABYLON.TransformNode("ga", scene); j.parent = root; j.position.set(sx, py, 0.05); j.rotation.z = rz; j.rotation.x = rx; const a = MB.CreateCapsule("garm", { radius: rad, height: len }, scene); a.material = mtl; a.parent = j; a.position.y = -len / 2; a.isPickable = false; return j; };
-    const trail = (mtl) => { sph(0.72, 8, mtl, 0, 0.7, 0).scaling.set(1, 1.5, 0.88); sph(0.54, 6, mtl, 0.07, 0.18, 0).scaling.set(1, 1.7, 0.78); sph(0.4, 6, mtl, -0.06, -0.3, 0).scaling.set(1, 1.6, 0.7); };
-    const D = M.shadow, P = M.pale, B = M.blood;
+    const root = new BABYLON.TransformNode("gtmp", scene);
+    const parts = [];
+    const skin = type === 0 ? M.shadow : M.pale, B = M.blood, eR = M.eyeR, eD = M.eyeD, bn = M.bone;
+    const gory = type === 1 || type === 2 || type === 4 || type === 5;
+    const box = (w, h, d, m, x, y, z, par) => { const e = MB.CreateBox("g", { width: w, height: h, depth: d }, scene); e.material = m; e.parent = par || root; e.position.set(x, y, z); parts.push(e); return e; };
+    const sph = (dia, m, x, y, z, par) => { const e = MB.CreateSphere("g", { diameter: dia, segments: 8 }, scene); e.material = m; e.parent = par || root; e.position.set(x, y, z); parts.push(e); return e; };
+    const cap = (r, h, m, x, y, z, par) => { const e = MB.CreateCapsule("g", { radius: r, height: h }, scene); e.material = m; e.parent = par || root; e.position.set(x, y, z); parts.push(e); return e; };
+    const jnt = (x, y, z, par) => { const n = new BABYLON.TransformNode("gn", scene); n.parent = par || root; n.position.set(x, y, z); return n; };
 
-    if (type === 3) {                       // TALL — faceless slender giant
-      box({ width: 0.32, height: 2.0, depth: 0.26 }, D, 0, 1.85, 0);
-      sph(0.32, 8, D, 0, 2.92, 0);          // blank featureless head
-      const aL = limb(D, -0.18, 2.6, -0.18, 0.1, 0.055, 2.3), aR = limb(D, 0.18, 2.6, 0.18, 0.1, 0.055, 2.3);   // arms to the ground
-      for (const j of [aL, aR]) { const d = MB.CreateBox("gbl", { width: 0.05, height: 0.6, depth: 0.05 }, scene); d.material = B; d.parent = j; d.position.y = -2.4; d.isPickable = false; }
-      box({ width: 0.05, height: 1.2, depth: 0.05 }, B, 0.05, 1.4, 0.14);   // blood down the body
-      sph(0.45, 6, D, 0, 0.6, 0).scaling.set(1, 2.0, 0.8);
-      return root;
-    }
-    if (type === 4) {                       // SCREAMER — many eyes, gaping mouth, gushing blood
-      box({ width: 0.52, height: 0.85, depth: 0.3 }, P, 0, 1.25, 0).rotation.x = 0.12;
-      sph(0.46, 8, P, 0, 1.86, 0.04).rotation.x = -0.45;                  // head thrown back
-      sph(0.3, 8, M.eyeD, 0, 1.78, 0.27).scaling.set(0.7, 1.5, 0.6);      // gaping mouth
-      for (const p of [[-0.13, 1.98, 0.3], [0.13, 1.98, 0.3], [0, 2.13, 0.24], [-0.06, 1.88, 0.34], [0.08, 1.9, 0.33]]) sph(0.1, 6, M.eyeR, p[0], p[1], p[2]);
-      box({ width: 0.13, height: 0.8, depth: 0.06 }, B, 0, 1.38, 0.28); box({ width: 0.05, height: 0.55, depth: 0.05 }, B, 0.11, 1.5, 0.28);
-      limb(P, -0.3, 1.6, 1.05, -0.3, 0.07, 1.15); limb(P, 0.3, 1.6, -1.05, -0.3, 0.07, 1.15);    // arms flung up
-      trail(P);
-      return root;
-    }
-    if (type === 5) {                       // REAPER — hooded skull
-      box({ width: 0.6, height: 1.0, depth: 0.4 }, D, 0, 1.3, 0);
-      sph(0.72, 8, D, 0, 1.95, -0.02).scaling.set(1, 1.25, 1);            // hood
-      sph(0.34, 8, P, 0, 1.95, 0.2);                                      // skull face
-      for (const s of [-0.1, 0.1]) sph(0.12, 6, M.eyeR, s, 1.98, 0.36);
-      sph(0.13, 6, M.eyeD, 0, 1.84, 0.37).scaling.set(1.2, 0.7, 0.6);
-      const jL = limb(P, -0.3, 1.5, 0.4, -0.6, 0.05, 1.2), jR = limb(P, 0.3, 1.5, -0.4, -0.6, 0.05, 1.2);
-      for (const j of [jL, jR]) { const h = MB.CreateSphere("gh", { diameter: 0.16, segments: 6 }, scene); h.material = P; h.parent = j; h.position.y = -1.2; h.scaling.set(1, 0.6, 1.6); h.isPickable = false; const d = MB.CreateBox("gbl", { width: 0.045, height: 0.5, depth: 0.045 }, scene); d.material = B; d.parent = j; d.position.y = -1.4; d.isPickable = false; }
-      box({ width: 0.05, height: 0.4, depth: 0.05 }, B, 0, 1.66, 0.36); box({ width: 0.05, height: 0.55, depth: 0.05 }, B, 0.1, 1.0, 0.18);   // blood from skull + body
-      sph(0.66, 6, D, 0, 0.55, 0).scaling.set(1, 1.8, 0.85); sph(0.46, 6, D, 0, -0.1, 0).scaling.set(1, 1.6, 0.7);
-      return root;
-    }
-
-    // types 0-2: distorted humans — shadow / bleeder / wraith (all bleed now)
-    const body = type === 0 ? D : P, eye = type === 1 ? M.eyeD : M.eyeR, bleed = true;
-    box({ width: 0.5, height: 0.85, depth: 0.3 }, body, 0, 1.25, 0).rotation.x = 0.22;
-    sph(0.42, 8, body, 0, 1.82, 0.12).rotation.z = 0.22;
+    // ---- skull ----
+    const H = jnt(0, 1.92, 0.04);
+    sph(0.4, skin, 0, 0.02, 0, H).scaling.set(0.9, 1.05, 1);
+    box(0.36, 0.06, 0.14, skin, 0, 0.12, 0.15, H);                         // brow ridge
+    for (const s of [-0.1, 0.1]) { sph(0.15, eD, s, 0.03, 0.13, H).scaling.set(1, 1, 0.55); sph(0.075, eR, s, 0.03, 0.18, H); }
+    box(0.05, 0.13, 0.07, eD, 0, -0.05, 0.2, H);                           // nose cavity
+    for (const s of [-0.15, 0.15]) box(0.08, 0.2, 0.1, skin, s, -0.04, 0.1, H);  // cheekbones
+    const J = jnt(0, -0.18, 0.1, H);
+    box(0.26, 0.16, 0.18, skin, 0, -0.06, 0.02, J);                        // jaw
+    sph(0.2, eD, 0, -0.06, 0.14, H).scaling.set(0.9, 0.8, 0.5);            // mouth cavity
+    for (let t = -2; t <= 2; t++) box(0.035, 0.06, 0.03, bn, t * 0.05, 0.02, 0.22, H);    // upper teeth
+    for (let t = -1; t <= 1; t++) box(0.035, 0.05, 0.03, bn, t * 0.06, 0.0, 0.16, J);     // lower teeth
+    // ---- neck + gaunt torso ----
+    cap(0.06, 0.16, skin, 0, 1.76, 0.03);
+    box(0.44, 0.34, 0.24, skin, 0, 1.52, 0);                               // chest
+    for (let r = 0; r < 3; r++) box(0.42 - r * 0.03, 0.03, 0.26, bn, 0, 1.46 - r * 0.09, 0.02);   // ribs
+    box(0.28, 0.3, 0.2, skin, 0, 1.2, 0);                                  // abdomen
+    box(0.34, 0.22, 0.22, skin, 0, 0.96, 0);                              // hips
+    // ---- jointed clawed arms ----
     for (const s of [-1, 1]) {
-      const j = limb(body, s * 0.28, 1.55, s * 0.5, -0.7, 0.07, 1.3);
-      const hand = MB.CreateSphere("ghand", { diameter: 0.22, segments: 6 }, scene); hand.material = body; hand.parent = j; hand.position.y = -1.3; hand.scaling.set(1, 0.7, 1.5); hand.isPickable = false;
-      if (bleed) { const dp = MB.CreateBox("gbl", { width: 0.05, height: 0.55, depth: 0.05 }, scene); dp.material = B; dp.parent = j; dp.position.y = -1.6; dp.isPickable = false; }
+      const sh = jnt(s * 0.28, 1.62, 0.02, root); sh.rotation.z = s * 0.35; sh.rotation.x = type === 4 ? -2.2 : -0.2;
+      sph(0.11, skin, 0, 0, 0, sh);
+      cap(0.06, 0.52, skin, 0, -0.3, 0, sh);
+      const el = jnt(0, -0.58, 0, sh); el.rotation.x = type === 4 ? 0.4 : -0.7;
+      cap(0.05, 0.5, skin, 0, -0.28, 0, el);
+      const wr = jnt(0, -0.55, 0, el);
+      box(0.11, 0.05, 0.13, skin, 0, 0, 0.03, wr);
+      for (let f = -1; f <= 1; f++) { const fg = cap(0.018, 0.2, bn, f * 0.04, -0.11, 0.06, wr); fg.rotation.x = 0.4; }   // claw fingers
+      if (gory) box(0.04, 0.4, 0.04, B, 0, -0.78, 0.03, wr);
     }
-    trail(body);
-    for (const s of [-0.11, 0.11]) sph(0.13, 6, eye, s, 1.86, 0.34);
-    sph(0.16, 6, M.eyeD, 0, 1.72, 0.35).scaling.set(0.8, 1.6, 0.6);
-    if (bleed) {                            // blood oozing from eyes, mouth, torso
-      for (const s of [-0.11, 0.11]) box({ width: 0.04, height: 0.36, depth: 0.04 }, B, s, 1.7, 0.37);
-      box({ width: 0.06, height: 0.52, depth: 0.05 }, B, 0, 1.47, 0.35);
-      box({ width: 0.05, height: 0.62, depth: 0.05 }, B, 0.12, 1.0, 0.17);
-      box({ width: 0.04, height: 0.44, depth: 0.04 }, B, -0.1, 0.92, 0.17);
+    // ---- tattered robe / floating lower body ----
+    for (let i = 0; i < 6; i++) { const a = i / 6 * 6.28; const dr = box(0.14, 0.6 + (i % 3) * 0.18, 0.08, skin, Math.cos(a) * 0.2, 0.55 - (i % 2) * 0.1, Math.sin(a) * 0.14); dr.rotation.x = Math.sin(a) * 0.3; dr.rotation.z = Math.cos(a) * 0.3; }
+    cap(0.26, 0.7, skin, 0, 0.35, 0).scaling.set(1, 1.3, 0.85);
+    sph(0.3, skin, 0.04, -0.25, 0).scaling.set(1, 1.7, 0.7);
+    // ---- blood ----
+    if (gory) {
+      for (const s of [-0.1, 0.1]) box(0.035, 0.4, 0.035, B, s, -0.2, 0.19, H);
+      box(0.05, 0.45, 0.045, B, 0, -0.36, 0.14, H);
+      box(0.05, 0.55, 0.05, B, 0.1, 1.3, 0.13); box(0.04, 0.45, 0.04, B, -0.08, 1.15, 0.13);
     }
-    return root;
+    // ---- per-type extras ----
+    if (type === 4) { H.rotation.x = -0.55; J.rotation.x = 0.7; for (const p of [[-0.12, 0.3, 0.12], [0.12, 0.3, 0.12], [0, 0.36, 0.08]]) sph(0.07, eR, p[0], p[1], p[2], H); }   // screamer
+    if (type === 5) sph(0.6, M.shadow, 0, 0.08, -0.05, H).scaling.set(1.15, 1.3, 1.15);   // reaper hood
+    if (type === 2) root.scaling.setAll(1.32);                             // wraith
+    else if (type === 3) root.scaling.set(0.84, 1.72, 0.84);              // tall slender
+
+    root.computeWorldMatrix(true);
+    const merged = BABYLON.Mesh.MergeMeshes(parts, true, true, undefined, false, true);   // one opaque mesh
+    root.dispose();
+    if (merged) { merged.name = "ghost"; merged.isPickable = false; }
+    return merged || new BABYLON.TransformNode("ghost", scene);
   }
   function spawnGhost(it) { it.node = makeGhost(it.type); it.node.position.set(it.x, it.baseY, it.z); }
 
@@ -448,7 +454,7 @@
   function startTrack() {
     const local = /^(127\.|localhost$|0\.0\.0\.0|\[?::1)/.test(location.hostname);
     const urls = window.HORROR_MUSIC_URL ? [window.HORROR_MUSIC_URL]
-      : (local ? ["audio/horror.mp3"] : [
+      : (local ? [] : [   // localhost (tests): no external fetch, just the synth bed
         "audio/horror.mp3",
         "https://freepd.com/music/Ghost%20Processional.mp3",
         "https://freepd.com/music/Darkness%20Speaks.mp3",
@@ -456,6 +462,7 @@
         "https://freepd.com/music/Long%20Note%20Two.mp3",
         "https://freepd.com/music/Mournful.mp3",
       ]);
+    if (!urls.length) return;
     try {
       const a = document.createElement("audio");
       a.loop = true; a.preload = "auto"; a.setAttribute("playsinline", ""); a.volume = muted ? 0 : MUSIC_VOL;
@@ -768,9 +775,13 @@
     if (it.agg) { it.agg.dispose(); it.agg = null; }
     if (it.collider && it.collider !== it.node) it.collider.dispose();
     it.collider = null;
-    // Dispose the meshes only — NOT materials/textures (shared/cached; see
-    // cachedMat) — or the world/hero materials and GlowLayer would break.
-    it.node.dispose(false, false); it.node = null; it.rotor = null; it.tailRotor = null; it.legL = null; it.legR = null;
+    // Dispose the meshes only — NOT the shared/cached sub-materials. Merged
+    // actors (ghosts) own a per-instance MultiMaterial wrapper; dispose just
+    // that wrapper (keeping its shared sub-materials) so it doesn't accumulate.
+    const mm = it.node.material;
+    it.node.dispose(false, false);
+    if (mm && mm.getClassName && mm.getClassName() === "MultiMaterial") mm.dispose(false, false);
+    it.node = null; it.rotor = null; it.tailRotor = null; it.legL = null; it.legR = null;
   }
 
   // ---- Actor physics: nearby actors are SOLID -----------------------------

@@ -33,7 +33,7 @@ const n = await page.evaluate(()=>{
   blds.sort((a,b)=>Math.hypot(a.position.x,a.position.z)-Math.hypot(b.position.x,b.position.z));
   const p = blds[0].position;
   e.stopRenderLoop();
-  const ghosts = s.transformNodes.filter(t=>t.name==="ghost" && t.getChildMeshes().length);
+  const ghosts = s.meshes.filter(t=>t.name==="ghost");
   const g = ghosts[0]; const gp = g.getAbsolutePosition();
   const cam = s.activeCamera;
   cam.position = new BABYLON.Vector3(gp.x + 3.5, gp.y + 1.2, gp.z + 4.5);
