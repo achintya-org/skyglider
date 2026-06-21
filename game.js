@@ -30,13 +30,13 @@
 
   // ---- Tunables -----------------------------------------------------------
   const GRAVITY = 9.81;
-  const WALK_SPEED = 5.2, RUN_SPEED = 10, JUMP_V = 7.6, WALK_ACCEL = 12;
+  const WALK_SPEED = 5.2, RUN_SPEED = 10, JUMP_V = 7.6, WALK_ACCEL = 18;
   // Arcade car driving
-  const CAR_ACCEL = 16, CAR_MAX = 30, CAR_REVERSE = 11, CAR_FRICTION = 0.9, CAR_STEER = 2.0, CAR_R = 1.7, ENTER_DIST = 6;
-  const HELI_ACCEL = 15, HELI_UP = 11, HELI_DRAG = 1.2, HELI_MAX = 34, HELI_YAW = 1.4;
+  const CAR_ACCEL = 18, CAR_MAX = 30, CAR_REVERSE = 11, CAR_FRICTION = 0.9, CAR_STEER = 2.3, CAR_R = 1.7, ENTER_DIST = 6;
+  const HELI_ACCEL = 15, HELI_UP = 11, HELI_DRAG = 1.0, HELI_MAX = 34, HELI_YAW = 1.7;
   // Flight is heading-based: arrows/WASD steer a heading, the glider cruises
   // along it with momentum. Hold Up to keep pitching up and climb, etc.
-  const FLY_CRUISE = 22, FLY_MAX_BOOST = 62, FLY_RESPONSE = 2.4, STEER_RATE = 1.7;
+  const FLY_CRUISE = 22, FLY_MAX_BOOST = 62, FLY_RESPONSE = 3.2, STEER_RATE = 2.1;
   const MOUSE_SENS = 0.0024;
   // Heavy weapon — the player shoulders a sophisticated rocket launcher and can
   // blow anyone away. Rockets fly out and detonate with an area blast.
@@ -49,7 +49,7 @@
   const ZOO_X = 780, ZOO_Z = 140, ZOO_R = 62;              // enclosure centre + roam radius (metres)
   const ZOO_NEAR = 250, ZOO_FAR = 320;                     // load creatures within NEAR, unload past FAR
   const CAM_PITCH_MIN = -0.45, CAM_PITCH_MAX = 1.15;
-  const CAM_DIST_WALK = 6.5, CAM_DIST_FLY = 11, CAM_LERP = 0.12;
+  const CAM_DIST_WALK = 6.5, CAM_DIST_FLY = 11, CAM_LERP = 9; // exponential rate (frame-rate independent)
 
   // ---- State --------------------------------------------------------------
   const S = { LOADING: 0, MENU: 1, PLAYING: 2, PAUSED: 3 };
@@ -62,7 +62,7 @@
   let nearZoo = false;                       // creature system is active only near the zoo
   let enterables = [], obstacles = [], drivingCar = null, carHeading = 0, carSpeed = 0, heliVel = null;
   let camYaw = 0, camPitch = 0.25, modelYaw = 0, flyYaw = 0, flyPitch = 0, boostE = 1, animPhase = 0, animT = 0;
-  let grounded = false, pointerLocked = false, lockedOnce = false;
+  let grounded = false, coyoteT = 0, pointerLocked = false, lockedOnce = false;
   // Rocket launcher: opt-in (off by default) + event-driven — costs ~0 unless
   // you take it out and pull the trigger.
   let armed = false, firing = false, fireCD = 0, fxT = 0, dying = [], rockets = [];
@@ -1869,7 +1869,8 @@
       const hit = scene.pickWithRay(ray, (m) => m.isPickable && m !== heroMesh);
       if (hit && hit.hit && hit.distance < CAM_DIST_WALK) desired = target.subtract(dir.scale(Math.max(1.5, hit.distance - 0.4)));
     }
-    cam.position = instant ? desired : BABYLON.Vector3.Lerp(cam.position, desired, CAM_LERP);
+    const camAlpha = instant ? 1 : 1 - Math.exp(-CAM_LERP * dt);
+    cam.position = BABYLON.Vector3.Lerp(cam.position, desired, camAlpha);
     cam.setTarget(target);
   }
 
@@ -2215,16 +2216,18 @@
     if (moving) moveDir.normalize();
 
     grounded = isGrounded();
+    if (grounded) coyoteT = 0.14; else coyoteT = Math.max(0, coyoteT - dt);
     const v = heroBody.getLinearVelocity();
     const sprint = keys["ShiftLeft"] || keys["ShiftRight"] || tBoost;
     const target = moving ? (sprint ? RUN_SPEED : WALK_SPEED) : 0;
     const k = Math.min(1, WALK_ACCEL * dt);
     v.x += (moveDir.x * target - v.x) * k; v.z += (moveDir.z * target - v.z) * k;
-    if (grounded && (keys["Space"] || tUp)) v.y = JUMP_V;
+    if (coyoteT > 0 && (keys["Space"] || tUp)) { v.y = JUMP_V; coyoteT = 0; }
     heroBody.setLinearVelocity(v);
 
-    if (moving) modelYaw = lerpAngle(modelYaw, Math.atan2(moveDir.x, moveDir.z), 0.2);
-    setModelRot(modelYaw, 0, 0);
+    const yawAlpha = 1 - Math.exp(-13 * dt);
+    if (moving) modelYaw = lerpAngle(modelYaw, Math.atan2(moveDir.x, moveDir.z), yawAlpha);
+    setModelRot(modelYaw, 0, 0, dt);
     animateWalk(dt, Math.hypot(v.x, v.z), grounded);
   }
 
@@ -2234,7 +2237,9 @@
   function updateFly(dt, kU, kD, kL, kR) {
     const boost = (keys["ShiftLeft"] || keys["ShiftRight"] || keys["Space"] || tBoost) && boostE > 0;
     const s = STEER_RATE * dt;
-    flyPitch += ((kU ? 1 : 0) - (kD ? 1 : 0) + tMoveY) * s;
+    const pitchIn = ((kU ? 1 : 0) - (kD ? 1 : 0) + tMoveY);
+    flyPitch += pitchIn * s;
+    if (!pitchIn) flyPitch -= flyPitch * 0.8 * dt;  // auto-level when no pitch input
     flyYaw += ((kR ? 1 : 0) - (kL ? 1 : 0) + tMoveX) * s;
     flyPitch = clamp(flyPitch, -1.3, 1.3);
 
@@ -2249,7 +2254,7 @@
 
     modelYaw = flyYaw;
     const bank = ((kL ? 1 : 0) - (kR ? 1 : 0) + (-tMoveX)) * 0.4;
-    setModelRot(flyYaw, clamp(flyPitch, -0.55, 0.55), bank);
+    setModelRot(flyYaw, clamp(flyPitch, -0.55, 0.55), bank, dt);
     animateFly(dt);
   }
 
@@ -2260,9 +2265,10 @@
     return !!(hit && hit.hit);
   }
 
-  function setModelRot(yaw, pitch, roll) {
+  function setModelRot(yaw, pitch, roll, dt) {
     const q = BABYLON.Quaternion.RotationYawPitchRoll(yaw, pitch, roll);
-    model.rotationQuaternion = BABYLON.Quaternion.Slerp(model.rotationQuaternion, q, 0.25);
+    const t = dt != null ? 1 - Math.exp(-17 * dt) : 0.25;
+    model.rotationQuaternion = BABYLON.Quaternion.Slerp(model.rotationQuaternion, q, t);
   }
 
   // ---- procedural animation ----
@@ -2271,27 +2277,28 @@
     animPhase += dt * (4 + speedH * 1.1);
     const amp = norm * 0.85;
     const sw = Math.sin(animPhase) * amp;
-    setJoint("legL", sw); setJoint("legR", -sw);
+    setJoint("legL", sw, dt); setJoint("legR", -sw, dt);
     // Armed → right arm raised sighting the launcher; unarmed → a natural swing.
-    if (armed) { setJoint("armR", GUN_AIM); setJoint("armL", -sw * 0.5 - 0.15); }
-    else { setJoint("armL", -sw * 0.8); setJoint("armR", sw * 0.8); }
-    if (punchT > 0) { setJoint("armR", -2.0); setJoint("armL", -0.5); }   // thrust the fist forward
-    if (!grounded) { setJoint("legL", -0.3); setJoint("legR", -0.3); }
+    if (armed) { setJoint("armR", GUN_AIM, dt); setJoint("armL", -sw * 0.5 - 0.15, dt); }
+    else { setJoint("armL", -sw * 0.8, dt); setJoint("armR", sw * 0.8, dt); }
+    if (punchT > 0) { setJoint("armR", -2.0, dt); setJoint("armL", -0.5, dt); }
+    if (!grounded) { setJoint("legL", -0.3, dt); setJoint("legR", -0.3, dt); }
   }
   function animateFly(dt) {
-    setJoint("legL", -0.25); setJoint("legR", -0.18);
-    setJoint("armL", 2.5); setJoint("armR", 2.5); // arms swept back
+    setJoint("legL", -0.25, dt); setJoint("legR", -0.18, dt);
+    setJoint("armL", 2.5, dt); setJoint("armR", 2.5, dt);
   }
   function animateIdle(dt) {
     const b = Math.sin(animT * 1.5) * 0.04;
-    setJoint("legL", 0); setJoint("legR", 0);
+    setJoint("legL", 0, dt); setJoint("legR", 0, dt);
     // Armed idle keeps the launcher raised; otherwise arms rest naturally.
-    if (armed && mode === MODE.WALK) { setJoint("armR", GUN_AIM + b * 0.5); setJoint("armL", -0.15 + b); }
-    else { setJoint("armL", b); setJoint("armR", -b); }
+    if (armed && mode === MODE.WALK) { setJoint("armR", GUN_AIM + b * 0.5, dt); setJoint("armL", -0.15 + b, dt); }
+    else { setJoint("armL", b, dt); setJoint("armR", -b, dt); }
   }
-  function setJoint(key, x) {
+  function setJoint(key, x, dt) {
     const j = joints[key]; if (!j) return;
-    j.rotation.x += (x - j.rotation.x) * 0.3;
+    const t = dt != null ? 1 - Math.exp(-20 * dt) : 0.3;
+    j.rotation.x += (x - j.rotation.x) * t;
   }
 
   // ========================================================================
