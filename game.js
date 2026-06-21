@@ -1413,39 +1413,92 @@
     model.parent = heroMesh;
     model.position.set(0, -0.95, 0); // model origin at the feet
 
-    const skin = mat("skin", new BABYLON.Color3(0.86, 0.66, 0.52));
-    const shirt = mat("shirt", new BABYLON.Color3(0.16, 0.42, 0.5));
-    const pants = mat("pants", new BABYLON.Color3(0.17, 0.19, 0.24));
-    const shoe = mat("shoe", new BABYLON.Color3(0.08, 0.08, 0.1));
-    const hair = mat("hair", new BABYLON.Color3(0.18, 0.12, 0.08));
-
-    const add = (m, name, opt, mtl, parent, pos) => {
-      const x = BABYLON.MeshBuilder["Create" + m](name, opt, scene);
-      x.material = mtl; x.parent = parent || model; if (pos) x.position.copyFrom(pos);
-      x.isPickable = false; shadowGen.addShadowCaster(x);
-      return x;
+    // ---- A lifelike human, built from rounded primitives and merged into a
+    // handful of meshes. Proportions are realistic (~7.5 heads tall); the head
+    // carries a real face (eyes, brows, nose, lips, ears, hair); arms and legs
+    // are jointed so they still animate. Skin has a soft sheen; clothing is matte.
+    const mkMat = (name, d, spec, sp) => {
+      let m = scene.getMaterialByName(name);
+      if (!m) { m = new BABYLON.StandardMaterial(name, scene); m.diffuseColor = d; m.specularColor = spec || new BABYLON.Color3(0.05, 0.05, 0.05); if (sp) m.specularPower = sp; }
+      return m;
     };
-    const V = (x, y, z) => new BABYLON.Vector3(x, y, z);
+    const skin = mkMat("skin", new BABYLON.Color3(0.80, 0.61, 0.49), new BABYLON.Color3(0.18, 0.15, 0.13), 28);
+    const shirt = mkMat("shirt", new BABYLON.Color3(0.16, 0.36, 0.46));
+    const pants = mkMat("pants", new BABYLON.Color3(0.17, 0.19, 0.24));
+    const shoe = mkMat("shoe", new BABYLON.Color3(0.09, 0.09, 0.11), new BABYLON.Color3(0.2, 0.2, 0.22), 40);
+    const hair = mkMat("hair", new BABYLON.Color3(0.11, 0.08, 0.06));
+    const eyeW = mkMat("eyeW", new BABYLON.Color3(0.92, 0.92, 0.9), new BABYLON.Color3(0.4, 0.4, 0.4), 64);
+    const iris = mkMat("iris", new BABYLON.Color3(0.22, 0.14, 0.08), new BABYLON.Color3(0.3, 0.3, 0.3), 64);
+    const lip = mkMat("lip", new BABYLON.Color3(0.62, 0.33, 0.31));
 
-    add("Box", "torso", { width: 0.5, height: 0.7, depth: 0.28 }, shirt, model, V(0, 1.15, 0));
-    add("Box", "hips", { width: 0.46, height: 0.25, depth: 0.26 }, pants, model, V(0, 0.78, 0));
-    add("Sphere", "head", { diameter: 0.34 }, skin, model, V(0, 1.72, 0.02));
-    add("Sphere", "hairTop", { diameter: 0.37, slice: 0.6 }, hair, model, V(0, 1.78, 0));
-    add("Box", "neck", { width: 0.16, height: 0.12, depth: 0.16 }, skin, model, V(0, 1.5, 0));
+    const MB = BABYLON.MeshBuilder, V = (x, y, z) => new BABYLON.Vector3(x, y, z);
+    let bin = [];
+    const P = (kind, opt, mtl, x, y, z, scl, rot) => {
+      const e = MB["Create" + kind]("p", opt, scene);
+      e.material = mtl; e.position.set(x, y, z);
+      if (scl) e.scaling.copyFrom(scl); if (rot) e.rotation.copyFrom(rot);
+      bin.push(e); return e;
+    };
+    const fuse = (parent, name, pos) => {
+      const m = BABYLON.Mesh.MergeMeshes(bin, true, true, undefined, false, true);
+      bin = [];
+      m.name = name; m.isPickable = false; m.parent = parent || model;
+      if (pos) m.position.copyFrom(pos);
+      shadowGen.addShadowCaster(m); return m;
+    };
 
-    // limbs on joint nodes so we can swing them
-    const limb = (key, x0, isLeg, topMtl) => {
+    // ---- HEAD (built around its own centre, then placed at the neck top) ----
+    P("Sphere", { diameter: 0.3, segments: 16 }, skin, 0, 0.05, 0, V(0.94, 1.04, 0.98));     // cranium
+    P("Sphere", { diameter: 0.25, segments: 14 }, skin, 0, -0.08, 0.012, V(0.86, 0.92, 0.92)); // cheeks / jaw
+    P("Box", { width: 0.2, height: 0.05, depth: 0.04 }, skin, 0, -0.165, 0.085);              // chin/jawline
+    P("Box", { width: 0.22, height: 0.03, depth: 0.04 }, skin, 0, 0.075, 0.125);             // brow ridge
+    P("Cylinder", { diameterTop: 0.03, diameterBottom: 0.07, height: 0.1, tessellation: 8 }, skin, 0, -0.02, 0.15, null, V(1.4, 0, 0)); // nose
+    for (const s of [-1, 1]) {
+      P("Sphere", { diameter: 0.07, segments: 10 }, eyeW, s * 0.068, 0.01, 0.128, V(1, 0.78, 0.7));  // eyeball
+      P("Sphere", { diameter: 0.034, segments: 8 }, iris, s * 0.072, 0.01, 0.157);                   // iris
+      P("Box", { width: 0.075, height: 0.014, depth: 0.02 }, hair, s * 0.07, 0.065, 0.15, null, V(0, 0, -s * 0.12)); // eyebrow
+      P("Sphere", { diameter: 0.065, segments: 8 }, skin, s * 0.158, -0.01, 0.0, V(0.45, 1, 0.85));  // ear
+    }
+    P("Box", { width: 0.085, height: 0.022, depth: 0.03 }, lip, 0, -0.115, 0.13);            // lips
+    // hair: scalp cap + back + sideburns (kept off the face)
+    P("Sphere", { diameter: 0.315, segments: 16, slice: 0.62 }, hair, 0, 0.055, -0.004, V(1.02, 1.0, 1.04));
+    P("Sphere", { diameter: 0.3, segments: 12 }, hair, 0, 0.04, -0.06, V(0.96, 0.95, 0.7));
+    fuse(model, "head", V(0, 1.71, 0.012));
+
+    // ---- TORSO (static): neck, shoulders, tapered chest→waist, pelvis -------
+    P("Cylinder", { diameterTop: 0.12, diameterBottom: 0.15, height: 0.16, tessellation: 12 }, skin, 0, 1.52, 0.005);   // neck
+    P("Box", { width: 0.44, height: 0.14, depth: 0.22 }, shirt, 0, 1.45, 0, V(1, 1, 1), V(0, 0, 0));                    // shoulders/traps
+    P("Capsule", { radius: 0.165, height: 0.46, tessellation: 12 }, shirt, 0, 1.24, 0, V(1.18, 1, 0.74));               // chest
+    P("Capsule", { radius: 0.145, height: 0.34, tessellation: 12 }, shirt, 0, 0.99, 0, V(1.06, 1, 0.72));               // waist
+    P("Box", { width: 0.38, height: 0.26, depth: 0.24 }, pants, 0, 0.8, 0);                                            // pelvis
+    for (const s of [-1, 1]) P("Sphere", { diameter: 0.2, segments: 12 }, shirt, s * 0.3, 1.44, 0, V(1, 0.95, 1));      // deltoids
+    fuse(model, "torso", V(0, 0, 0));
+
+    // ---- LIMBS on joint nodes (so they swing); each whole limb is one mesh --
+    const limb = (key, x0, isLeg) => {
       const j = new BABYLON.TransformNode(key, scene); j.parent = model;
       j.position.set(x0, isLeg ? 0.78 : 1.42, 0);
-      const len = isLeg ? 0.78 : 0.62;
-      const seg = add("Capsule", key + "S", { radius: isLeg ? 0.11 : 0.085, height: len }, topMtl, j, V(0, -len / 2, 0));
-      if (isLeg) add("Box", key + "F", { width: 0.16, height: 0.12, depth: 0.3 }, shoe, j, V(0, -len + 0.02, 0.07));
-      else add("Sphere", key + "H", { diameter: 0.13 }, skin, j, V(0, -len, 0));
+      if (isLeg) {
+        P("Capsule", { radius: 0.105, height: 0.4, tessellation: 10 }, pants, 0, -0.2, 0, V(1, 1, 0.95));    // thigh
+        P("Sphere", { diameter: 0.15, segments: 10 }, pants, 0, -0.4, 0);                                    // knee
+        P("Capsule", { radius: 0.08, height: 0.36, tessellation: 10 }, pants, 0, -0.58, 0.005, V(1, 1, 0.9));// calf
+        P("Box", { width: 0.12, height: 0.08, depth: 0.16, }, shoe, 0, -0.75, 0.03);                          // ankle/heel
+        P("Box", { width: 0.115, height: 0.06, depth: 0.12 }, shoe, 0, -0.77, 0.14);                          // toe
+      } else {
+        P("Sphere", { diameter: 0.14, segments: 10 }, shirt, 0, -0.02, 0);                                   // shoulder cap
+        P("Capsule", { radius: 0.062, height: 0.3, tessellation: 10 }, shirt, 0, -0.18, 0);                  // upper arm (sleeve)
+        P("Sphere", { diameter: 0.095, segments: 8 }, skin, 0, -0.34, 0);                                    // elbow
+        P("Capsule", { radius: 0.052, height: 0.26, tessellation: 10 }, skin, 0, -0.47, 0.01);               // forearm
+        P("Box", { width: 0.075, height: 0.1, depth: 0.04 }, skin, 0, -0.6, 0.015);                          // palm
+        P("Box", { width: 0.072, height: 0.055, depth: 0.035 }, skin, 0, -0.655, 0.02);                      // fingers
+        P("Box", { width: 0.024, height: 0.05, depth: 0.03 }, skin, x0 > 0 ? -0.04 : 0.04, -0.6, 0.025);     // thumb
+      }
+      fuse(j, key + "M", V(0, 0, 0));
       joints[key] = j;
       return j;
     };
-    limb("armL", 0.32, false, shirt); limb("armR", -0.32, false, shirt);
-    limb("legL", 0.13, true, pants); limb("legR", -0.13, true, pants);
+    limb("armL", 0.32, false); limb("armR", -0.32, false);
+    limb("legL", 0.13, true); limb("legR", -0.13, true);
 
     buildGun();
   }
