@@ -48,7 +48,7 @@
   let mode = MODE.WALK;
 
   let engine, scene, heroMesh, heroBody, model, joints = {}, cam, shadowGen;
-  let buildings = [], water, traffic = [], peds = [], birds = [], ghosts = [];
+  let buildings = [], water, traffic = [], peds = [], birds = [], ghosts = [], giants = [];
   let enterables = [], obstacles = [], drivingCar = null, carHeading = 0, carSpeed = 0, heliVel = null;
   let camYaw = 0, camPitch = 0.25, modelYaw = 0, flyYaw = 0, flyPitch = 0, boostE = 1, animPhase = 0, animT = 0;
   let grounded = false, pointerLocked = false, lockedOnce = false;
@@ -187,6 +187,7 @@
     buildBirds();
     igniteNearestBuilding();
     buildGhosts();
+    buildGiants();
   }
 
   // ---- A building on fire near the spawn (flames + smoke) -----------------
@@ -435,6 +436,88 @@
       const g = ctx.createGain(); g.gain.setValueAtTime(0.0001, t); g.gain.exponentialRampToValueAtTime(0.28, t + 0.02); g.gain.exponentialRampToValueAtTime(0.0001, t + 0.7);
       o.connect(f); f.connect(g); g.connect(ctx.destination); o.start(t); o.stop(t + 0.75);
     } catch (e) {}
+  }
+
+  // ---- Giants: hulking muscular monsters roaming the streets -------------
+  // Detailed (abs, pecs, delts, biceps, scary head) merged into one opaque mesh
+  // + two swinging legs. Some are as tall as the towers. Lazy + big view range
+  // so the tall ones are seen across the city. Bodies exist only when near you.
+  function giantMats() {
+    const C = (r, g, b) => new BABYLON.Color3(r, g, b);
+    const mk = (n, diff, em, sp) => { let x = scene.getMaterialByName(n); if (!x) { x = new BABYLON.StandardMaterial(n, scene); x.diffuseColor = diff; x.emissiveColor = em || C(0, 0, 0); x.specularColor = sp || C(0.05, 0.05, 0.05); } return x; };
+    return {
+      skin: mk("giSkin", C(0.33, 0.3, 0.27), C(0.045, 0.04, 0.034), C(0.12, 0.11, 0.1)),
+      eye: mk("giEye", C(0.2, 0, 0), C(1, 0.16, 0.1)),
+      teeth: mk("giTeeth", C(0.5, 0.48, 0.42), C(0.07, 0.07, 0.06)),
+    };
+  }
+  function makeGiant() {
+    const M = giantMats(), MB = BABYLON.MeshBuilder, S = M.skin;
+    const root = new BABYLON.TransformNode("giant", scene);
+    const merge = (build) => { const tmp = new BABYLON.TransformNode("gtmp", scene), parts = []; build(tmp, parts); tmp.computeWorldMatrix(true); const m = BABYLON.Mesh.MergeMeshes(parts, true, true, undefined, false, true); tmp.dispose(); m.isPickable = false; return m; };
+    const body = merge((tmp, parts) => {
+      const box = (w, h, d, m, x, y, z) => { const e = MB.CreateBox("gi", { width: w, height: h, depth: d }, scene); e.material = m; e.parent = tmp; e.position.set(x, y, z); parts.push(e); return e; };
+      const sph = (dia, m, x, y, z) => { const e = MB.CreateSphere("gi", { diameter: dia, segments: 8 }, scene); e.material = m; e.parent = tmp; e.position.set(x, y, z); parts.push(e); return e; };
+      const cap = (r, h, m, x, y, z) => { const e = MB.CreateCapsule("gi", { radius: r, height: h }, scene); e.material = m; e.parent = tmp; e.position.set(x, y, z); parts.push(e); return e; };
+      box(0.92, 0.5, 0.52, S, 0, 1.5, 0);                                  // pelvis
+      for (let r = 0; r < 4; r++) for (const s of [-1, 1]) sph(0.27, S, s * 0.16, 2.0 + r * 0.27, 0.28).scaling.set(1, 0.9, 0.7);  // abs (8-pack)
+      for (const s of [-1, 1]) box(0.18, 1.1, 0.42, S, s * 0.42, 2.4, 0.06);  // obliques
+      for (const s of [-1, 1]) sph(0.52, S, s * 0.28, 3.1, 0.26).scaling.set(1, 0.82, 0.95);  // pecs
+      box(1.1, 0.42, 0.62, S, 0, 3.4, 0);                                  // upper chest
+      for (const s of [-1, 1]) sph(0.36, S, s * 0.3, 3.56, -0.1);          // traps
+      for (const s of [-1, 1]) box(0.22, 1.1, 0.56, S, s * 0.56, 2.9, -0.05);  // lats
+      for (const s of [-1, 1]) { sph(0.52, S, s * 0.68, 3.45, 0); cap(0.27, 1.0, S, s * 0.86, 2.9, 0.12); sph(0.36, S, s * 0.96, 3.08, 0.16); cap(0.21, 0.95, S, s * 0.98, 1.98, 0.26); sph(0.3, S, s * 1.02, 1.5, 0.32); }  // delts/biceps/forearms/fists
+      cap(0.23, 0.4, S, 0, 3.72, 0);                                       // neck
+      sph(0.52, S, 0, 4.12, 0.05).scaling.set(0.95, 1.05, 1);             // head
+      box(0.42, 0.09, 0.16, S, 0, 4.2, 0.34);                             // brow
+      for (const s of [-0.17, 0.17]) sph(0.12, M.eye, s, 4.13, 0.44);     // glowing eyes
+      box(0.36, 0.18, 0.18, S, 0, 3.9, 0.36);                            // jaw
+      for (let t = -2; t <= 2; t++) box(0.05, 0.08, 0.04, M.teeth, t * 0.07, 3.96, 0.46);  // gritted teeth
+    });
+    body.parent = root;
+    const leg = (sx) => {
+      const lt = new BABYLON.TransformNode("gileg", scene); lt.parent = root; lt.position.set(sx * 0.34, 1.5, 0);
+      const m = merge((tmp, parts) => {
+        const cap = (r, h, x, y, z) => { const e = MB.CreateCapsule("gl", { radius: r, height: h }, scene); e.material = S; e.parent = tmp; e.position.set(x, y, z); parts.push(e); };
+        cap(0.31, 1.15, 0, -0.55, 0); cap(0.25, 1.05, 0, -1.55, 0.05);     // thigh + calf
+        const f = MB.CreateBox("glf", { width: 0.36, height: 0.22, depth: 0.64 }, scene); f.material = S; f.parent = tmp; f.position.set(0, -2.12, 0.2); parts.push(f);
+      });
+      m.parent = lt;
+      return lt;
+    };
+    return { root, legL: leg(-1), legR: leg(1) };
+  }
+  function buildGiants() {
+    for (let i = 0; i < 11; i++) {
+      const tall = i % 4 === 0;                         // ~a quarter are tower-tall
+      const scale = tall ? 14 + Math.random() * 26 : 3 + Math.random() * 3.5;
+      const ang = Math.random() * 6.28, rad = 120 + Math.random() * 700;
+      giants.push({
+        scale, x: Math.cos(ang) * rad, z: Math.sin(ang) * rad,
+        heading: Math.random() * 6.28, turn: (Math.random() - 0.5) * 0.1,
+        speed: (tall ? 4 : 2) + Math.random() * 2, walk: Math.random() * 6, walkSp: tall ? 1.0 : 2.0,
+        node: null, legL: null, legR: null,
+      });
+    }
+  }
+  function spawnGiant(it) {
+    const g = makeGiant();
+    it.node = g.root; it.legL = g.legL; it.legR = g.legR;
+    g.root.scaling.setAll(it.scale);
+    g.root.position.set(it.x, 0.7 * it.scale, it.z);
+  }
+  function animateGiants(dt) {
+    for (const g of giants) {
+      if (!g.node) continue;
+      g.heading += g.turn * dt;
+      g.x += Math.sin(g.heading) * g.speed * dt; g.z += Math.cos(g.heading) * g.speed * dt;
+      if (g.x * g.x + g.z * g.z > 950 * 950) g.heading = Math.atan2(-g.x, -g.z);   // turn back toward the city
+      g.walk += g.walkSp * dt;
+      const sw = Math.sin(g.walk) * 0.5;
+      g.legL.rotation.x = sw; g.legR.rotation.x = -sw;
+      g.node.position.set(g.x, 0.7 * g.scale + Math.abs(Math.sin(g.walk)) * 0.04 * g.scale, g.z);   // stomp bob
+      g.node.rotation.y = g.heading;
+    }
   }
 
   // ---- Horror background score -------------------------------------------
@@ -760,6 +843,7 @@
     ensureList(traffic, spawnTraffic, 130, 175, p, null);
     ensureList(peds, spawnPed, 110, 150, p, null);
     ensureList(ghosts, spawnGhost, 230, 270, p, null);   // glowing — visible haunting the skyline from a distance
+    ensureList(giants, spawnGiant, 420, 470, p, null);   // tower-tall — visible from afar, so a wider radius
     updateFireFX(p);                          // burning building emits only when you're near
   }
   function ensureList(list, makeFn, sR, dR, p, keep) {
@@ -776,11 +860,13 @@
     if (it.collider && it.collider !== it.node) it.collider.dispose();
     it.collider = null;
     // Dispose the meshes only — NOT the shared/cached sub-materials. Merged
-    // actors (ghosts) own a per-instance MultiMaterial wrapper; dispose just
-    // that wrapper (keeping its shared sub-materials) so it doesn't accumulate.
-    const mm = it.node.material;
+    // actors own per-instance MultiMaterial wrappers; collect and dispose just
+    // those wrappers (keeping their shared sub-materials) so they don't pile up.
+    const mms = [];
+    if (it.node.material) mms.push(it.node.material);
+    if (it.node.getChildMeshes) for (const c of it.node.getChildMeshes()) if (c.material) mms.push(c.material);
     it.node.dispose(false, false);
-    if (mm && mm.getClassName && mm.getClassName() === "MultiMaterial") mm.dispose(false, false);
+    for (const m of mms) if (m && m.getClassName && m.getClassName() === "MultiMaterial") m.dispose(false, false);
     it.node = null; it.rotor = null; it.tailRotor = null; it.legL = null; it.legR = null;
   }
 
@@ -1258,6 +1344,7 @@
     animatePedestrians(dt);
     animateBirds(dt);
     animateGhosts(dt);
+    animateGiants(dt);
     maybeManageActors(heroMesh.position);
     if (state !== S.PLAYING) { animateIdle(dt); updateCamera(dt); return; }
 
