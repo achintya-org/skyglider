@@ -1,0 +1,61 @@
+name: Repo admin
+
+# One-off repo administration using the org PAT (admin rights). Push-based so it
+# works from this feature branch, like the firebase setup workflow. Edit
+# .github/repo-admin-trigger.txt to run it:
+#   line 1: visibility   (public | private | skip)
+#   line 2: collaborator (GitHub username or email; blank to skip)
+#   line 3: permission   (pull | push | admin; default push)
+on:
+  push:
+    branches: ["claude/move-into-org-one-712g89"]
+    paths: [".github/repo-admin-trigger.txt"]
+  workflow_dispatch:
+
+jobs:
+  admin:
+    runs-on: ubuntu-latest
+    env:
+      GH_TOKEN: ${{ secrets.PAT_TOKEN }}
+      REPO: ${{ github.repository }}
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Run admin tasks
+        run: |
+          set +e
+          ORG="${REPO%%/*}"
+          VIS=$(sed -n '1p' .github/repo-admin-trigger.txt | tr -d '[:space:]')
+          WHO=$(sed -n '2p' .github/repo-admin-trigger.txt | tr -d '[:space:]')
+          PERM=$(sed -n '3p' .github/repo-admin-trigger.txt | tr -d '[:space:]'); [ -z "$PERM" ] && PERM=push
+          echo "REPO=$REPO ORG=$ORG VIS=$VIS WHO=$WHO PERM=$PERM"
+          echo "PAT length: ${#GH_TOKEN}"
+
+          if [ "$VIS" = "public" ] || [ "$VIS" = "private" ]; then
+            echo "=== set repository visibility=$VIS ==="
+            gh api -X PATCH "repos/$REPO" -f visibility="$VIS" >/tmp/vis.json 2>/tmp/vis.err \
+              && echo "OK: visibility is now $VIS" \
+              || { echo "FAILED to set visibility:"; cat /tmp/vis.err; }
+          fi
+
+          if [ -n "$WHO" ]; then
+            if echo "$WHO" | grep -q '@'; then
+              echo "=== resolving email $WHO to a GitHub username ==="
+              Q=$(printf %s "$WHO" | sed 's/@/%40/')
+              LOGIN=$(gh api "search/users?q=${Q}+in:email" --jq '.items[0].login' 2>/dev/null)
+              echo "resolved login: '$LOGIN'"
+              if [ -n "$LOGIN" ] && [ "$LOGIN" != "null" ]; then
+                gh api -X PUT "repos/$REPO/collaborators/$LOGIN" -f permission="$PERM" \
+                  && echo "OK: invited $LOGIN to $REPO ($PERM)" || echo "FAILED to add collaborator $LOGIN"
+              else
+                echo "email is not publicly searchable; sending an ORG invitation by email"
+                gh api -X POST "orgs/$ORG/invitations" -f email="$WHO" -f role=direct_member \
+                  && echo "OK: org invitation sent to $WHO" \
+                  || echo "FAILED to send org invitation (PAT may lack admin:org, or the person must be added by username)"
+              fi
+            else
+              gh api -X PUT "repos/$REPO/collaborators/$WHO" -f permission="$PERM" \
+                && echo "OK: invited $WHO to $REPO ($PERM)" || echo "FAILED to add collaborator $WHO"
+            fi
+          fi
+          echo "=== admin tasks complete ==="
