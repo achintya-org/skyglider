@@ -41,6 +41,10 @@
   // Flood — the risen sea that drowns the war-torn city. Surges up ONCE when the
   // game opens, then settles and does no further per-frame work.
   const FLOOD_HIDDEN = -4, FLOOD_LEVEL = 1.7, FLOOD_RISE = 0.9;   // metres, metres/sec
+  // Heavy weapon — the player shoulders a sophisticated rocket launcher and can
+  // blow anyone away. Rockets fly out and detonate with an area blast.
+  const GUN_RANGE = 700, FIRE_CD = 0.7, GUN_AIM = -1.42;   // metres, seconds between launches, shoulder pose
+  const ROCKET_SPEED = 95, BLAST_R = 16;                   // metres/sec, explosion kill radius
   const CAM_PITCH_MIN = -0.45, CAM_PITCH_MAX = 1.15;
   const CAM_DIST_WALK = 6.5, CAM_DIST_FLY = 11, CAM_LERP = 0.12;
 
@@ -55,6 +59,10 @@
   let enterables = [], obstacles = [], drivingCar = null, carHeading = 0, carSpeed = 0, heliVel = null;
   let camYaw = 0, camPitch = 0.25, modelYaw = 0, flyYaw = 0, flyPitch = 0, boostE = 1, animPhase = 0, animT = 0;
   let grounded = false, pointerLocked = false, lockedOnce = false;
+  // Rocket launcher: event-driven — costs ~0 until you actually pull the trigger.
+  let firing = false, fireCD = 0, fxT = 0, dying = [], rockets = [];
+  let gunPivot = null, muzzle = null, muzzleFlash = null, rocketProto = null;
+  let bloodPS = null, boomPS = null, smokePS = null, noiseBuf = null;
   const keys = {};
   // touch
   let tMoveX = 0, tMoveY = 0, tLookX = 0, tLookY = 0, tBoost = false, tUp = false, tDown = false;
@@ -107,6 +115,22 @@
       cols: scene.meshes.reduce((n, m) => n + (m.name === "acol" || m.name === "pcol" ? 1 : 0), 0),
     });
     window.__tp = (x, z) => { heroMesh.position.set(x, heroMesh.position.y, z); maybeManageActors(heroMesh.position); return scene.materials.length; };
+    // weapon test hooks (headless): count alive/dead actors, launch, detonate.
+    window.__actors = () => {
+      const all = [].concat(peds, ghosts, giants, rhinos, dinos);
+      return { alive: all.filter((a) => a.node && !a.dead).length, dead: all.filter((a) => a.dead).length, rockets: rockets.length, dying: dying.length };
+    };
+    window.__fire = () => { launchRocket(); return rockets.length; };
+    window.__blast = (x, y, z) => { explode(new BABYLON.Vector3(x, y, z), null, null); return window.__actors(); };
+    window.__nearestActor = () => {
+      const p = heroMesh.position; let best = null, bd = 1e18;
+      for (const a of [].concat(peds, ghosts, giants, rhinos, dinos)) {
+        if (!a.node || a.dead) continue;
+        const c = a.node.getAbsolutePosition(), d = (c.x - p.x) ** 2 + (c.z - p.z) ** 2;
+        if (d < bd) { bd = d; best = { x: c.x, y: c.y, z: c.z }; }
+      }
+      return best;
+    };
     window.__enter = (type) => {
       if (state !== S.PLAYING || mode !== MODE.WALK) return mode;
       const c = enterables.find((e) => !type || e.type === type);
@@ -1119,6 +1143,7 @@
   function ensureList(list, makeFn, sR, dR, p, keep) {
     const s2 = sR * sR, d2 = dR * dR;
     for (const it of list) {
+      if (it.dead) continue;                  // gunned down → never respawns
       const dx = it.x - p.x, dz = it.z - p.z, dd = dx * dx + dz * dz;
       if (!it.node && dd < s2) makeFn(it);
       else if (it.node && dd > d2 && !(keep && keep(it))) disposeActor(it);
@@ -1405,6 +1430,264 @@
     };
     limb("armL", 0.32, false, shirt); limb("armR", -0.32, false, shirt);
     limb("legL", 0.13, true, pants); limb("legR", -0.13, true, pants);
+
+    buildGun();
+  }
+
+  // ---- The player's heavy weapon: a sophisticated rocket launcher -----------
+  // A shouldered tube (one merged static mesh on the hand joint) plus a rocket
+  // prototype and pooled FX that stay idle (zero cost) until you pull the trigger.
+  function buildGun() {
+    const metal = mat("gunMetal", new BABYLON.Color3(0.16, 0.18, 0.14));   // olive-drab military body
+    metal.specularColor = new BABYLON.Color3(0.4, 0.42, 0.45); metal.specularPower = 64;
+    const dark = mat("gunDark", new BABYLON.Color3(0.07, 0.075, 0.08));
+    const accent = new BABYLON.StandardMaterial("gunAccent", scene);       // cyan tech glow — matches the brand
+    accent.diffuseColor = new BABYLON.Color3(0.04, 0.5, 0.62);
+    accent.emissiveColor = new BABYLON.Color3(0.0, 0.55, 0.72);
+    accent.specularColor = new BABYLON.Color3(0.2, 0.2, 0.2);
+    const warhead = mat("rktHead", new BABYLON.Color3(0.7, 0.16, 0.12));
+
+    // gunPivot sits at the right hand; rotation.x maps the launcher's +z (the
+    // bore) onto the forearm's −y, so when the arm raises, the tube points ahead.
+    gunPivot = new BABYLON.TransformNode("gunPivot", scene);
+    gunPivot.parent = joints["armR"];
+    gunPivot.position.set(0, -0.62, 0.05);
+    gunPivot.rotation.x = Math.PI / 2;
+
+    const parts = [];
+    const box = (w, h, d, m, x, y, z, rx) => { const e = BABYLON.MeshBuilder.CreateBox("gun", { width: w, height: h, depth: d }, scene); e.material = m; e.position.set(x, y, z); if (rx) e.rotation.x = rx; parts.push(e); return e; };
+    const tube = (dia, h, m, x, y, z, tess) => { const e = BABYLON.MeshBuilder.CreateCylinder("gun", { diameter: dia, height: h, tessellation: tess || 16 }, scene); e.material = m; e.rotation.x = Math.PI / 2; e.position.set(x, y, z); parts.push(e); return e; };
+    tube(0.26, 1.15, metal, 0, 0, 0.05);               // main launch tube
+    tube(0.3, 0.12, dark, 0, 0, 0.62);                 // flared muzzle
+    tube(0.31, 0.1, dark, 0, 0, -0.5);                 // rear exhaust cone
+    tube(0.265, 0.5, accent, 0, 0, 0.05, 16);          // thin glowing ring band around the tube
+    box(0.28, 0.05, 0.5, accent, 0, 0.0, 0.05);        // glowing top data-strip
+    box(0.1, 0.16, 0.34, dark, 0, 0.17, 0.04);         // optic housing on top
+    tube(0.07, 0.16, dark, 0, 0.26, 0.1, 12);          // scope lens
+    box(0.05, 0.07, 0.05, accent, 0, 0.27, 0.18);      // glowing reticle dot on the scope
+    box(0.09, 0.26, 0.1, dark, 0, -0.2, -0.06, 0.32);  // pistol grip
+    box(0.07, 0.06, 0.16, dark, 0, -0.05, 0.24);       // fore grip
+    box(0.16, 0.12, 0.2, metal, 0.0, -0.12, -0.18);    // trigger/body block
+
+    const gun = BABYLON.Mesh.MergeMeshes(parts, true, true, undefined, false, true);
+    gun.name = "gun"; gun.isPickable = false; gun.parent = gunPivot; gun.position.set(0, 0, 0);
+    shadowGen.addShadowCaster(gun);
+
+    // muzzle reference point + a back-blast flash that flares only on launch
+    muzzle = new BABYLON.TransformNode("muzzle", scene); muzzle.parent = gunPivot; muzzle.position.set(0, 0, 0.72);
+    const flashMat = new BABYLON.StandardMaterial("flashMat", scene);
+    flashMat.emissiveColor = new BABYLON.Color3(1, 0.7, 0.3); flashMat.diffuseColor = new BABYLON.Color3(0, 0, 0);
+    flashMat.disableLighting = true; flashMat.specularColor = new BABYLON.Color3(0, 0, 0);
+    muzzleFlash = BABYLON.MeshBuilder.CreateSphere("muzzleFlash", { diameter: 0.55, segments: 6 }, scene);
+    muzzleFlash.material = flashMat; muzzleFlash.parent = muzzle; muzzleFlash.scaling.set(1, 1, 1.4);
+    muzzleFlash.isPickable = false; muzzleFlash.setEnabled(false);
+
+    // rocket prototype: warhead cone + body + tail fins + a glowing exhaust.
+    const rp = [];
+    const rcone = BABYLON.MeshBuilder.CreateCylinder("rk", { diameterTop: 0, diameterBottom: 0.22, height: 0.34, tessellation: 12 }, scene);
+    rcone.material = warhead; rcone.rotation.x = Math.PI / 2; rcone.position.z = 0.42; rp.push(rcone);
+    const rbody = BABYLON.MeshBuilder.CreateCylinder("rk", { diameter: 0.22, height: 0.6, tessellation: 12 }, scene);
+    rbody.material = dark; rbody.rotation.x = Math.PI / 2; rbody.position.z = 0.08; rp.push(rbody);
+    const rband = BABYLON.MeshBuilder.CreateCylinder("rk", { diameter: 0.235, height: 0.1, tessellation: 12 }, scene);
+    rband.material = accent; rband.rotation.x = Math.PI / 2; rband.position.z = 0.2; rp.push(rband);
+    for (let f = 0; f < 4; f++) { const fin = BABYLON.MeshBuilder.CreateBox("rk", { width: 0.02, height: 0.2, depth: 0.2 }, scene); fin.material = dark; fin.position.z = -0.16; fin.rotation.z = f * Math.PI / 2; fin.position.x = Math.cos(f * Math.PI / 2) * 0.14; fin.position.y = Math.sin(f * Math.PI / 2) * 0.14; rp.push(fin); }
+    rocketProto = BABYLON.Mesh.MergeMeshes(rp, true, true, undefined, false, true);
+    rocketProto.name = "rocketProto"; rocketProto.isPickable = false; rocketProto.setEnabled(false);
+    const flame = BABYLON.MeshBuilder.CreateCylinder("rkFlame", { diameterTop: 0.18, diameterBottom: 0.02, height: 0.5, tessellation: 8 }, scene);
+    flame.material = flashMat; flame.rotation.x = -Math.PI / 2; flame.position.z = -0.45; flame.parent = rocketProto; flame.isPickable = false;
+
+    const soft = makeSoftTexture();
+    // shared blood burst for direct/▒nearby kills (idle = 0 particles, ~0 cost)
+    bloodPS = burstSystem("blood", soft, 200, [0.7, 0.02, 0.02], [0.35, 0, 0], 0.18, 0.6, -14);
+    // shared explosion fireball (orange→black), and a rising smoke puff
+    boomPS = burstSystem("boom", soft, 360, [1, 0.6, 0.15], [1, 0.25, 0.0], 1.2, 4.5, 4);
+    boomPS.blendMode = BABYLON.ParticleSystem.BLENDMODE_ONEONE;
+    boomPS.colorDead = new BABYLON.Color4(0.2, 0.05, 0, 0);
+    boomPS.minLifeTime = 0.3; boomPS.maxLifeTime = 0.9; boomPS.minEmitPower = 6; boomPS.maxEmitPower = 22;
+    smokePS = burstSystem("boomSmoke", soft, 220, [0.1, 0.1, 0.11], [0.04, 0.04, 0.05], 2, 7, 7);
+    smokePS.minLifeTime = 1.2; smokePS.maxLifeTime = 3; smokePS.minEmitPower = 2; smokePS.maxEmitPower = 8;
+    smokePS.color1 = new BABYLON.Color4(0.12, 0.12, 0.13, 0.6); smokePS.color2 = new BABYLON.Color4(0.04, 0.04, 0.05, 0.5);
+  }
+  // Build a pooled, manual-emit particle burst system (starts emitting nothing).
+  function burstSystem(name, tex, cap, c1, c2, minS, maxS, gy) {
+    const ps = new BABYLON.ParticleSystem(name, cap, scene);
+    ps.particleTexture = tex;
+    ps.emitter = new BABYLON.Vector3(0, -80, 0);
+    ps.minEmitBox = new BABYLON.Vector3(-0.2, -0.2, -0.2); ps.maxEmitBox = new BABYLON.Vector3(0.2, 0.2, 0.2);
+    ps.color1 = new BABYLON.Color4(c1[0], c1[1], c1[2], 1); ps.color2 = new BABYLON.Color4(c2[0], c2[1], c2[2], 1);
+    ps.colorDead = new BABYLON.Color4(c2[0] * 0.4, 0, 0, 0);
+    ps.minSize = minS; ps.maxSize = maxS;
+    ps.minLifeTime = 0.25; ps.maxLifeTime = 0.7;
+    ps.emitRate = 0;                            // bursts via manualEmitCount only
+    ps.gravity = new BABYLON.Vector3(0, gy, 0);
+    ps.direction1 = new BABYLON.Vector3(-3, 1, -3); ps.direction2 = new BABYLON.Vector3(3, 5, 3);
+    ps.minEmitPower = 2; ps.maxEmitPower = 7; ps.updateSpeed = 0.02;
+    ps.start();
+    return ps;
+  }
+
+  // Hit volume (centre height above the node origin, radius) per actor kind —
+  // scaled by the actor's own size so big monsters are easy to hit.
+  const KINDS = ["peds", "ghosts", "giants", "rhinos", "dinos"];
+  const HIT = {
+    peds:   { hf: 1.0, rf: 1.4 }, ghosts: { hf: 1.1, rf: 1.7 },
+    giants: { hf: 1.7, rf: 1.6 }, rhinos: { hf: 0.9, rf: 1.8 }, dinos: { hf: 2.0, rf: 2.0 },
+  };
+  // Fire a rocket from the launcher straight down the reticle. The projectile
+  // flies, and detonates on the first body / the ground / a building.
+  function launchRocket() {
+    if (!muzzle || !rocketProto) return;
+    const mz = muzzle.getAbsolutePosition();
+    const aim = cam.getDirection(BABYLON.Axis.Z).normalize();   // reticle direction
+    const node = rocketProto.clone("rocket");
+    node.setEnabled(true); node.position.copyFrom(mz);
+    node.rotationQuaternion = BABYLON.Quaternion.FromLookDirectionLH(aim, BABYLON.Axis.Y);
+    rockets.push({ node, dir: aim, x: mz.x, y: mz.y, z: mz.z, life: GUN_RANGE / ROCKET_SPEED });
+    backBlast();
+    launchSound();
+  }
+  // Move every in-flight rocket; detonate on contact. Bounded by how fast you
+  // fire (rockets are short-lived) → no idle cost once they're gone.
+  function updateRockets(dt) {
+    if (!rockets.length) return;
+    for (let i = rockets.length - 1; i >= 0; i--) {
+      const r = rockets[i];
+      const step = ROCKET_SPEED * dt;
+      r.x += r.dir.x * step; r.y += r.dir.y * step; r.z += r.dir.z * step;
+      r.node.position.set(r.x, r.y, r.z);
+      r.life -= dt;
+      let hit = r.life <= 0 || r.y <= 0.4 || (r.y < 80 && blocked(r.x, r.z));
+      let victim = null, vkind = null;
+      if (!hit) {
+        for (const kind of KINDS) {
+          const list = ({ peds, ghosts, giants, rhinos, dinos })[kind], cfg = HIT[kind];
+          for (const it of list) {
+            if (!it.node || it.dead) continue;
+            const s = it.scale || it.baseScale || 1, rr = cfg.rf * s;
+            const c = it.node.getAbsolutePosition();
+            const dx = c.x - r.x, dy = (c.y + cfg.hf * s) - r.y, dz = c.z - r.z;
+            if (dx * dx + dy * dy + dz * dz < rr * rr) { hit = true; victim = it; vkind = kind; break; }
+          }
+          if (hit) break;
+        }
+      }
+      if (hit) {
+        explode(new BABYLON.Vector3(r.x, Math.max(0.4, r.y), r.z), victim, vkind);
+        r.node.dispose(); rockets.splice(i, 1);
+      }
+    }
+  }
+  // Area blast: a fireball + smoke, and everyone within BLAST_R is killed and
+  // flung outward from the centre.
+  function explode(center, direct, dkind) {
+    boomBurst(center);
+    explosionSound();
+    const R2 = BLAST_R * BLAST_R;
+    for (const kind of KINDS) {
+      const list = ({ peds, ghosts, giants, rhinos, dinos })[kind];
+      for (const it of list) {
+        if (!it.node || it.dead) continue;
+        const c = it.node.getAbsolutePosition();
+        const dx = c.x - center.x, dz = c.z - center.z;
+        if (it === direct || dx * dx + dz * dz < R2) {
+          const len = Math.hypot(dx, dz) || 1;
+          killActor(it, kind, new BABYLON.Vector3(dx / len, 0.4, dz / len), c);
+        }
+      }
+    }
+  }
+
+  // Knock the victim off its feet and blow it apart, then dispose. The short
+  // "dying" list is processed only while non-empty → no idle cost.
+  function killActor(it, kind, aim, point) {
+    it.dead = true;
+    const node = it.node; it.node = null;
+    if (it.agg) { it.agg.dispose(); it.agg = null; }
+    if (it.collider && it.collider !== node) it.collider.dispose();
+    it.collider = null;
+    if (it.fire) { it.fire.dispose(); it.fire = null; }
+    it.legL = it.legR = it.legs = it.mouth = null;
+    const mms = [];
+    if (node.material) mms.push(node.material);
+    if (node.getChildMeshes) for (const c of node.getChildMeshes()) if (c.material) mms.push(c.material);
+    const s = it.scale || it.baseScale || 1;
+    const kb = 7 / Math.sqrt(s);                           // lighter folks fly further
+    dying.push({
+      node, mms, t: 0, ttl: 1.1, s0: node.scaling.x,
+      vx: aim.x * kb + (Math.random() - 0.5) * 3, vy: 6 + Math.random() * 3, vz: aim.z * kb + (Math.random() - 0.5) * 3,
+      sx: (Math.random() - 0.5) * 9, sy: (Math.random() - 0.5) * 9, sz: (Math.random() - 0.5) * 9,
+    });
+    bloodBurst(point, s);
+  }
+  function updateDying(dt) {
+    if (!dying.length) return;
+    for (let i = dying.length - 1; i >= 0; i--) {
+      const d = dying[i]; d.t += dt; d.vy -= 16 * dt;
+      const n = d.node;
+      n.position.x += d.vx * dt; n.position.y += d.vy * dt; n.position.z += d.vz * dt;
+      n.rotation.x += d.sx * dt; n.rotation.y += d.sy * dt; n.rotation.z += d.sz * dt;
+      if (n.position.y < 0.2) { n.position.y = 0.2; d.vy *= -0.3; d.vx *= 0.6; d.vz *= 0.6; }
+      const k = Math.max(0.001, 1 - d.t / d.ttl);
+      n.scaling.setAll(d.s0 * k);                          // shrink to nothing
+      if (d.t >= d.ttl) {
+        n.dispose(false, false);
+        for (const m of d.mms) if (m && m.getClassName && m.getClassName() === "MultiMaterial") m.dispose(false, false);
+        dying.splice(i, 1);
+      }
+    }
+  }
+  function bloodBurst(point, s) {
+    if (!bloodPS) return;
+    bloodPS.emitter = point.clone();
+    const scl = Math.min(3, Math.sqrt(s));
+    bloodPS.minSize = 0.18 * scl; bloodPS.maxSize = 0.6 * scl;
+    bloodPS.manualEmitCount = Math.round(34 * scl);        // one burst, then it stops on its own
+  }
+  function boomBurst(center) {
+    if (boomPS) { boomPS.emitter = center.clone(); boomPS.manualEmitCount = 130; }
+    if (smokePS) { smokePS.emitter = center.clone(); smokePS.manualEmitCount = 70; }
+  }
+  // Back-blast flash at the launcher muzzle, auto-hidden after a few frames.
+  function backBlast() {
+    if (muzzleFlash) { muzzleFlash.scaling.set(1 + Math.random() * 0.8, 1 + Math.random() * 0.8, 1.2 + Math.random()); muzzleFlash.rotation.z = Math.random() * 6.28; muzzleFlash.setEnabled(true); }
+    fxT = 0.07;
+  }
+  function updateGunFX(dt) {
+    if (fxT <= 0) return;                                  // idle: a single compare, no work
+    fxT -= dt;
+    if (fxT <= 0 && muzzleFlash) muzzleFlash.setEnabled(false);
+  }
+  function audio() {
+    if (muted) return null;
+    if (!sfxCtx) sfxCtx = new (window.AudioContext || window.webkitAudioContext)();
+    if (sfxCtx.state === "suspended") sfxCtx.resume();
+    if (!noiseBuf) { noiseBuf = sfxCtx.createBuffer(1, Math.floor(sfxCtx.sampleRate * 0.6), sfxCtx.sampleRate); const d = noiseBuf.getChannelData(0); for (let i = 0; i < d.length; i++) d[i] = Math.random() * 2 - 1; }
+    return sfxCtx;
+  }
+  // Launch: a sharp whoosh as the rocket leaves the tube.
+  function launchSound() {
+    const ctx = audio(); if (!ctx) return;
+    try {
+      const t = ctx.currentTime;
+      const src = ctx.createBufferSource(); src.buffer = noiseBuf; src.playbackRate.value = 1.4;
+      const bp = ctx.createBiquadFilter(); bp.type = "bandpass"; bp.frequency.setValueAtTime(1600, t); bp.frequency.exponentialRampToValueAtTime(500, t + 0.25); bp.Q.value = 1.2;
+      const g = ctx.createGain(); g.gain.setValueAtTime(0.0001, t); g.gain.exponentialRampToValueAtTime(0.4, t + 0.02); g.gain.exponentialRampToValueAtTime(0.0001, t + 0.3);
+      src.connect(bp); bp.connect(g); g.connect(ctx.destination); src.start(t); src.stop(t + 0.32);
+    } catch (e) {}
+  }
+  // Detonation: a deep boom + a noisy blast.
+  function explosionSound() {
+    const ctx = audio(); if (!ctx) return;
+    try {
+      const t = ctx.currentTime;
+      const src = ctx.createBufferSource(); src.buffer = noiseBuf; src.playbackRate.value = 0.7;
+      const lp = ctx.createBiquadFilter(); lp.type = "lowpass"; lp.frequency.setValueAtTime(900, t); lp.frequency.exponentialRampToValueAtTime(120, t + 0.4);
+      const g = ctx.createGain(); g.gain.setValueAtTime(0.0001, t); g.gain.exponentialRampToValueAtTime(0.7, t + 0.01); g.gain.exponentialRampToValueAtTime(0.0001, t + 0.5);
+      src.connect(lp); lp.connect(g); g.connect(ctx.destination); src.start(t); src.stop(t + 0.55);
+      const o = ctx.createOscillator(); o.type = "sine"; o.frequency.setValueAtTime(110, t); o.frequency.exponentialRampToValueAtTime(34, t + 0.35);
+      const g2 = ctx.createGain(); g2.gain.setValueAtTime(0.8, t); g2.gain.exponentialRampToValueAtTime(0.0001, t + 0.4);
+      o.connect(g2); g2.connect(ctx.destination); o.start(t); o.stop(t + 0.42);
+    } catch (e) {}
   }
 
   function mat(name, color) {
@@ -1522,6 +1805,10 @@
       camYaw += e.movementX * MOUSE_SENS;
       camPitch = clamp(camPitch + e.movementY * MOUSE_SENS, CAM_PITCH_MIN, CAM_PITCH_MAX);
     });
+    // Hold left mouse to fire (once the pointer is locked); release to stop.
+    window.addEventListener("mousedown", (e) => { if (e.button === 0 && state === S.PLAYING && pointerLocked) firing = true; });
+    window.addEventListener("mouseup", (e) => { if (e.button === 0) firing = false; });
+    window.addEventListener("blur", () => { firing = false; });
 
     $("play-btn").addEventListener("click", (e) => { e.stopPropagation(); start(); });
     $("resume-btn").addEventListener("click", (e) => { e.stopPropagation(); resumeGame(); });
@@ -1572,6 +1859,7 @@
     hold($("btn-boost"), (v) => tBoost = v);
     hold($("btn-up"), (v) => tUp = v);
     hold($("btn-down"), (v) => tDown = v);           // descend in fly / heli
+    const fb = document.getElementById("btn-fire"); if (fb) hold(fb, (v) => firing = v);   // hold to shoot
     $("btn-fly").addEventListener("click", (e) => {
       e.preventDefault();
       if (state === S.PLAYING && (mode === MODE.WALK || mode === MODE.FLY)) toggleMode();
@@ -1595,6 +1883,8 @@
     showBtn($("btn-action"), act);
     showBtn($("btn-fly"), inVeh ? null : (mode === MODE.FLY ? "LAND" : "FLY"));
     showBtn($("btn-down"), (mode === MODE.FLY || mode === MODE.HELI) ? "DOWN" : null);
+    showBtn(document.getElementById("btn-fire"), mode === MODE.WALK ? "FIRE" : null);   // shoot on foot
+    if (mode !== MODE.WALK) firing = false;
     const up = $("btn-up"); if (up) up.textContent = mode === MODE.WALK ? "JUMP" : "UP";
   }
   function showBtn(el, label) {
@@ -1619,8 +1909,15 @@
     animateGiants(dt);
     animateRhinos(dt);
     animateDinos(dt);
+    updateRockets(dt);                        // rockets in flight (only while any exist)
+    updateDying(dt);                          // blown-apart bodies (only while any exist)
+    updateGunFX(dt);                          // hide the back-blast flash after a few frames
     maybeManageActors(heroMesh.position);
     if (state !== S.PLAYING) { animateIdle(dt); updateCamera(dt); return; }
+
+    // Trigger: fire a rocket while held, on foot, on a cooldown.
+    if (fireCD > 0) fireCD -= dt;
+    if (firing && mode === MODE.WALK && fireCD <= 0) { launchRocket(); fireCD = FIRE_CD; }
 
     // Unified 4-direction intent — arrow keys mirror the touch stick exactly.
     const kR = keys["ArrowRight"] || keys["KeyD"];
@@ -1829,7 +2126,8 @@
     const amp = norm * 0.85;
     const sw = Math.sin(animPhase) * amp;
     setJoint("legL", sw); setJoint("legR", -sw);
-    setJoint("armL", -sw * 0.8); setJoint("armR", sw * 0.8);
+    // Right arm stays raised, sighting down the gun; left arm gives a light swing.
+    setJoint("armR", GUN_AIM); setJoint("armL", -sw * 0.5 - 0.15);
     if (!grounded) { setJoint("legL", -0.3); setJoint("legR", -0.3); }
   }
   function animateFly(dt) {
@@ -1839,7 +2137,9 @@
   function animateIdle(dt) {
     const b = Math.sin(animT * 1.5) * 0.04;
     setJoint("legL", 0); setJoint("legR", 0);
-    setJoint("armL", b); setJoint("armR", -b);
+    // Idle on foot keeps the weapon raised and ready.
+    if (mode === MODE.WALK) { setJoint("armR", GUN_AIM + b * 0.5); setJoint("armL", -0.15 + b); }
+    else { setJoint("armL", b); setJoint("armR", -b); }
   }
   function setJoint(key, x) {
     const j = joints[key]; if (!j) return;

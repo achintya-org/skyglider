@@ -144,11 +144,16 @@ kbd {
 
 #dot {
   position: absolute; top: 50%; left: 50%;
-  width: 7px; height: 7px; margin: -3.5px;
+  width: 22px; height: 22px; margin: -11px;
   border-radius: 50%;
-  background: rgba(255, 255, 255, 0.55);
-  box-shadow: 0 0 0 2px rgba(0, 0, 0, 0.25);
+  border: 1.5px solid rgba(255, 90, 60, 0.85);
+  box-shadow: 0 0 0 1px rgba(0, 0, 0, 0.4), inset 0 0 0 1px rgba(0, 0, 0, 0.25);
 }
+#dot::before, #dot::after {
+  content: ""; position: absolute; background: rgba(255, 90, 60, 0.9);
+}
+#dot::before { top: 50%; left: -7px; right: -7px; height: 1.5px; margin-top: -0.75px; }
+#dot::after { left: 50%; top: -7px; bottom: -7px; width: 1.5px; margin-left: -0.75px; }
 
 #pause-btn {
   position: absolute; top: 14px; right: 14px;
@@ -241,6 +246,7 @@ kbd {
   backdrop-filter: blur(6px); -webkit-backdrop-filter: blur(6px);
 }
 .tbtn.act { background: var(--accent-2); color: #0a0f1a; border-color: var(--accent-2); }
+.tbtn.fire { background: rgba(255, 90, 60, 0.32); border-color: rgba(255, 120, 80, 0.7); color: #fff; }
 
 #name-input {
   width: 100%;
