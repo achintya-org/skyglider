@@ -379,6 +379,7 @@
   // Enterable, parked vehicles you can drive — a mix of cars and bikes.
   function buildVehicles() {
     const spots = [
+      ["heli", 12, 14, 0],   // right by the spawn plaza — grab it and fly immediately
       ["car", 3, 4, 0], ["bike", -5, 5, Math.PI], ["car", 22, -8, Math.PI / 2],
       ["bike", -24, 10, -Math.PI / 2], ["car", 9, 95, 0], ["car", -100, -9, Math.PI / 2],
       ["bike", 120, 14, 0], ["car", -130, 100, Math.PI],
