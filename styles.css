@@ -186,6 +186,30 @@ kbd {
 }
 #weapon-btn.on { background: rgba(255, 90, 60, 0.32); border-color: rgba(255, 120, 80, 0.7); color: #fff; }
 
+#chat-btn {
+  position: absolute; top: 14px; left: 142px;
+  pointer-events: auto;
+  height: 42px; padding: 0 12px;
+  font-size: 12px; font-weight: 800; letter-spacing: 0.4px; color: var(--ink);
+  background: var(--glass); border: 1px solid var(--glass-brd);
+  border-radius: 12px; cursor: pointer;
+  backdrop-filter: blur(8px); -webkit-backdrop-filter: blur(8px);
+}
+
+/* Compass guide pointing to the zoo where the creatures are kept. */
+#zoo-guide {
+  position: absolute; top: 56px; left: 50%; transform: translateX(-50%);
+  display: flex; align-items: center; gap: 7px;
+  padding: 5px 12px;
+  font-size: 12px; font-weight: 800; letter-spacing: 0.5px; color: #ffd76a;
+  background: rgba(20, 12, 6, 0.55); border: 1px solid rgba(255, 207, 74, 0.35);
+  border-radius: 999px;
+  backdrop-filter: blur(6px); -webkit-backdrop-filter: blur(6px);
+}
+#zoo-arrow { display: inline-block; font-size: 15px; line-height: 1; transition: transform 0.12s linear; }
+#zoo-guide.here { color: #8ff0a0; border-color: rgba(120, 240, 160, 0.4); }
+#zoo-guide.here #zoo-arrow { display: none; }
+
 #online-btn {
   position: absolute; top: 14px; right: 64px;
   pointer-events: auto;
@@ -262,6 +286,7 @@ kbd {
 }
 .tbtn.act { background: var(--accent-2); color: #0a0f1a; border-color: var(--accent-2); }
 .tbtn.fire { background: rgba(255, 90, 60, 0.32); border-color: rgba(255, 120, 80, 0.7); color: #fff; }
+.tbtn.punch { background: rgba(255, 180, 60, 0.28); border-color: rgba(255, 200, 90, 0.7); color: #fff; }
 
 #name-input {
   width: 100%;

@@ -13,7 +13,7 @@
   <link rel="manifest" href="./manifest.webmanifest" />
   <link rel="icon" type="image/svg+xml" href="./icons/icon.svg?v=2" />
   <link rel="apple-touch-icon" href="./icons/icon-192.png?v=2" />
-  <link rel="stylesheet" href="./styles.css?v=mp14" />
+  <link rel="stylesheet" href="./styles.css?v=mp15" />
 </head>
 <body>
   <canvas id="renderCanvas" touch-action="none"></canvas>
@@ -23,8 +23,10 @@
     <button id="pause-btn" aria-label="Pause">⏸</button>
     <button id="sound-btn" aria-label="Mute sound">🔊</button>
     <button id="weapon-btn" aria-label="Take or leave the rocket launcher">🚀 ARM</button>
+    <button id="chat-btn" class="hidden" aria-label="Open chat">💬 CHAT</button>
     <button id="online-btn" class="hidden" aria-label="Toggle online">GO ONLINE</button>
     <div id="area">COUNTRYSIDE</div>
+    <div id="zoo-guide"><span id="zoo-arrow">▲</span><span id="zoo-dist">ZOO</span></div>
     <div id="prompt" class="hidden">Press E to drive</div>
     <div id="dot" class="hidden"></div>
     <div id="readout">
@@ -46,6 +48,7 @@
     <div id="stick-zone"><div id="stick-base" class="hidden"><div id="stick-knob"></div></div></div>
     <div id="touch-buttons">
       <button id="btn-action" class="tbtn act hidden">DRIVE</button>
+      <button id="btn-punch" class="tbtn punch">PUNCH</button>
       <button id="btn-fire" class="tbtn fire">FIRE</button>
       <button id="btn-fly" class="tbtn">FLY</button>
       <button id="btn-boost" class="tbtn">BOOST</button>
@@ -76,6 +79,7 @@
         <div><kbd>E</kbd><span>Enter / exit car or bike</span></div>
         <div><kbd>G</kbd><span>Take / leave rocket launcher</span></div>
         <div><kbd>Click</kbd><span>Fire rocket (when armed)</span></div>
+        <div><kbd>Q</kbd><span>Punch / melee</span></div>
         <div><kbd>Mouse</kbd><span>Look (on foot)</span></div>
         <div><kbd>WASD</kbd><kbd>↑↓←→</kbd><span>Move &amp; steer flight</span></div>
         <div><kbd>Shift</kbd><span>Sprint / Boost</span></div>
@@ -107,7 +111,7 @@
   <script src="./vendor/babylon.js?v=mp2"></script>
   <script src="./vendor/HavokPhysics_umd.js?v=mp2"></script>
   <script src="./firebase-config.js?v=mp4"></script>
-  <script src="./mp.js?v=mp4"></script>
-  <script src="./game.js?v=mp24"></script>
+  <script src="./mp.js?v=mp5"></script>
+  <script src="./game.js?v=mp25"></script>
 </body>
 </html>

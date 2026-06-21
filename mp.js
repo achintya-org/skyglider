@@ -55,7 +55,7 @@
     const w = worker; setTimeout(() => { try { w.terminate(); } catch (e) {} }, 80);
     worker = null;
     MP.enabled = false; MP.ready = false; MP.players = {};
-    for (const k in avatars) { avatars[k].root.dispose(false, true); delete avatars[k]; }
+    for (const k in avatars) { disposeAvatar(avatars[k]); delete avatars[k]; }
     window.removeEventListener("pagehide", onLeave);
   }
   function onLeave() { try { worker && worker.postMessage({ type: "stop" }); } catch (e) {} }
@@ -94,8 +94,26 @@
     const namePlane = label(root, 256, 64, 3.4, 1.9);
     const bubblePlane = label(root, 512, 140, 6, 2.7);
     bubblePlane.setEnabled(false);
-    return { root, body: null, shape: null, rotor: null, color: hashColor(uid),
+    // A solid body collider so peers can't walk through each other. It's a heavy
+    // capsule (zero inertia so it never tips) driven toward the peer's networked
+    // position by velocity — it shoves the local player just like a parked car.
+    let col = null, agg = null;
+    try {
+      if (scene.getPhysicsEngine && scene.getPhysicsEngine()) {
+        col = BABYLON.MeshBuilder.CreateCapsule("rpcol", { radius: 0.5, height: 1.85 }, scene);
+        col.isVisible = false; col.isPickable = false; col.position.set(0, -60, 0);
+        agg = new BABYLON.PhysicsAggregate(col, BABYLON.PhysicsShapeType.CAPSULE, { mass: 140, friction: 0.4, restitution: 0 }, scene);
+        agg.body.setAngularDamping(100);
+        agg.body.setMassProperties({ inertia: BABYLON.Vector3.Zero() });
+      }
+    } catch (e) { col = null; agg = null; }
+    return { root, body: null, shape: null, rotor: null, color: hashColor(uid), col, agg,
       namePlane, nameTex: namePlane._tex, bubblePlane, bubbleTex: bubblePlane._tex, lastName: "", lastMsg: "" };
+  }
+  function disposeAvatar(a) {
+    try { if (a.agg) a.agg.dispose(); } catch (e) {}
+    try { if (a.col) a.col.dispose(); } catch (e) {}
+    a.root.dispose(false, false);
   }
   // (Re)build the body to match the peer's mode. Only rebuilds when the shape
   // category changes (human↔car↔heli), so it costs nothing frame-to-frame.
@@ -157,7 +175,7 @@
   function sync(dt, localPos) {
     if (!scene || !MP.enabled) return;
     const players = MP.players;
-    for (const uid in avatars) if (!players[uid]) { avatars[uid].root.dispose(false, false); delete avatars[uid]; }
+    for (const uid in avatars) if (!players[uid]) { disposeAvatar(avatars[uid]); delete avatars[uid]; }
     for (const uid in players) {
       const d = players[uid];
       if (typeof d.x !== "number") continue;
@@ -170,6 +188,17 @@
       if (a.rotor) a.rotor.rotation.y += dt * 30;             // spin remote heli rotor
       const dist = BABYLON.Vector3.Distance(a.root.position, localPos);
       a.root.setEnabled(dist < 600);
+      // Solid body: drive the collider toward the peer (only when close enough to
+      // matter; parked far underground otherwise, so distant peers cost nothing).
+      if (a.col && a.agg) {
+        if (dist < 120 && a.shape === "human") {
+          const cp = a.col.position, k = 1 / Math.max(dt, 0.016);
+          a.agg.body.setLinearVelocity(new BABYLON.Vector3((a.root.position.x - cp.x) * k, (a.root.position.y - cp.y) * k, (a.root.position.z - cp.z) * k));
+        } else {
+          a.agg.body.setLinearVelocity(new BABYLON.Vector3(0, 0, 0));
+          a.col.position.set(a.root.position.x, -60, a.root.position.z);
+        }
+      }
       const nm = d.name || "Player";
       if (nm !== a.lastName) { a.lastName = nm; drawLabel(a.nameTex, nm, false, a.color); }
       const fresh = d.msgAt && Date.now() - d.msgAt < 7000;
