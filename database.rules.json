@@ -1,0 +1,20 @@
+{
+  "rules": {
+    "players": {
+      ".read": true,
+      "$uid": {
+        ".write": true,
+        ".validate": "!newData.exists() || newData.hasChildren(['x', 'z'])",
+        "x": { ".validate": "newData.isNumber()" },
+        "y": { ".validate": "newData.isNumber()" },
+        "z": { ".validate": "newData.isNumber()" },
+        "h": { ".validate": "newData.isNumber()" },
+        "t": { ".validate": "newData.isNumber()" },
+        "msgAt": { ".validate": "newData.isNumber()" },
+        "name": { ".validate": "newData.isString() && newData.val().length <= 24" },
+        "msg": { ".validate": "newData.isString() && newData.val().length <= 160" },
+        "mode": { ".validate": "newData.isString() && newData.val().length <= 12" }
+      }
+    }
+  }
+}
