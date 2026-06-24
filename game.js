@@ -49,7 +49,7 @@
   const ZOO_X = 780, ZOO_Z = 140, ZOO_R = 62;              // enclosure centre + roam radius (metres)
   const ZOO_NEAR = 250, ZOO_FAR = 320;                     // load creatures within NEAR, unload past FAR
   const CAM_PITCH_MIN = -0.45, CAM_PITCH_MAX = 1.15;
-  const CAM_DIST_WALK = 6.5, CAM_DIST_FLY = 11, CAM_LERP = 9; // exponential rate (frame-rate independent)
+  const CAM_DIST_WALK = 6.5, CAM_DIST_FLY = 11, CAM_DIST_AIM = 3.6, CAM_LERP = 9; // exponential rate (frame-rate independent)
 
   // ---- State --------------------------------------------------------------
   const S = { LOADING: 0, MENU: 1, PLAYING: 2, PAUSED: 3 };
@@ -1664,7 +1664,12 @@
   function launchRocket() {
     if (!muzzle || !rocketProto) return;
     const mz = muzzle.getAbsolutePosition();
-    const aim = cam.getDirection(BABYLON.Axis.Z).normalize();   // reticle direction
+    // Aim at whatever the centre crosshair is pointing at: shoot a ray from the
+    // camera, take the far point along it, and send the rocket from the muzzle
+    // toward that point — so the shot converges on the reticle, not the avatar.
+    const camDir = cam.getDirection(BABYLON.Axis.Z).normalize();
+    const aimPoint = cam.position.add(camDir.scale(GUN_RANGE));
+    const aim = aimPoint.subtract(mz).normalize();
     const node = rocketProto.clone("rocket");
     node.setEnabled(true); node.position.copyFrom(mz);
     node.rotationQuaternion = BABYLON.Quaternion.FromLookDirectionLH(aim, BABYLON.Axis.Y);
@@ -1863,11 +1868,21 @@
       // GTA-style orbit (mouse-controlled) with a pull-in if a wall is behind.
       const cp = Math.cos(camPitch), sp = Math.sin(camPitch);
       const dir = new BABYLON.Vector3(Math.sin(camYaw) * cp, sp, Math.cos(camYaw) * cp);
-      target = heroPos.add(new BABYLON.Vector3(0, 0.5, 0));
-      desired = target.subtract(dir.scale(CAM_DIST_WALK));
-      const ray = new BABYLON.Ray(target, desired.subtract(target).normalize(), CAM_DIST_WALK);
+      const dist = armed ? CAM_DIST_AIM : CAM_DIST_WALK;
+      if (armed) {
+        // Over-the-shoulder aim: shift right + up and pull in close, so the centre
+        // crosshair clears the avatar and points at the world — aim at a target
+        // (mouse on laptop, drag on phone) and fire.
+        const right = new BABYLON.Vector3(Math.cos(camYaw), 0, -Math.sin(camYaw));
+        const off = right.scale(0.8).add(new BABYLON.Vector3(0, 0.6, 0));
+        target = heroPos.add(new BABYLON.Vector3(0, 1.1, 0)).add(off);
+      } else {
+        target = heroPos.add(new BABYLON.Vector3(0, 0.5, 0));
+      }
+      desired = target.subtract(dir.scale(dist));
+      const ray = new BABYLON.Ray(target, desired.subtract(target).normalize(), dist);
       const hit = scene.pickWithRay(ray, (m) => m.isPickable && m !== heroMesh);
-      if (hit && hit.hit && hit.distance < CAM_DIST_WALK) desired = target.subtract(dir.scale(Math.max(1.5, hit.distance - 0.4)));
+      if (hit && hit.hit && hit.distance < dist) desired = target.subtract(dir.scale(Math.max(1.2, hit.distance - 0.4)));
     }
     const camAlpha = instant ? 1 : 1 - Math.exp(-CAM_LERP * dt);
     cam.position = BABYLON.Vector3.Lerp(cam.position, desired, camAlpha);
