@@ -1932,6 +1932,13 @@
     });
     window.addEventListener("mousemove", (e) => {
       if (state !== S.PLAYING || !pointerLocked) return;
+      if (mode === MODE.FLY) {
+        // In flight the trackpad / mouse steers the glider (yaw + pitch), so you
+        // can navigate by dragging as well as with the arrow keys.
+        flyYaw += e.movementX * MOUSE_SENS * 1.6;
+        flyPitch = clamp(flyPitch - e.movementY * MOUSE_SENS * 1.4, -1.3, 1.3);   // push up = climb
+        return;
+      }
       camYaw += e.movementX * MOUSE_SENS;
       camPitch = clamp(camPitch + e.movementY * MOUSE_SENS, CAM_PITCH_MIN, CAM_PITCH_MAX);
     });
