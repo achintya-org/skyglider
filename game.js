@@ -228,7 +228,6 @@
     buildVehicles();
     buildPedestrians();
     buildBirds();
-    igniteNearestBuilding();
     buildZoo();
     buildGhosts();
     buildGiants();
